@@ -1,4 +1,4 @@
-import { useReducer, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import type { DragEvent, SVGProps } from "react";
 import { sha256File, type HashedFile } from "./lib/fileHash";
 import {
@@ -40,6 +40,7 @@ function CopyIcon() { return <Icon className="icon-small"><rect x="8" y="8" widt
 function FileIcon() { return <Icon className="icon-medium"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10Z" /><path d="M13 3v7h7M8 15h8M8 18h5" /></Icon>; }
 function ShieldIcon() { return <Icon className="icon-medium"><path d="M12 3 19 6v5.4c0 4.5-2.9 7.6-7 9.6-4.1-2-7-5.1-7-9.6V6l7-3Z" /><path d="m9 12 2 2 4-4" /></Icon>; }
 function ActivityIcon() { return <Icon className="icon-medium"><path d="M3 12h4l3-8 4 16 3-8h4" /></Icon>; }
+function WalletIcon() { return <Icon className="icon-medium"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H20v14H5.5A2.5 2.5 0 0 1 3 16.5Z" /><path d="M3 8h14a3 3 0 0 1 3 3v2h-4a2 2 0 0 0 0 4h4M16 13h.01" /></Icon>; }
 function Chevron() { return <Icon className="icon-small"><path d="m9 18 6-6-6-6" /></Icon>; }
 
 const navLinks = [
@@ -62,6 +63,7 @@ function shortAddress(address: string): string {
 
 function App() {
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null);
+  const [activeSection, setActiveSection] = useState("overview");
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletError, setWalletError] = useState("");
   const [fileResult, setFileResult] = useState<HashedFile | null>(null);
@@ -81,6 +83,21 @@ function App() {
   >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const contractReady = Boolean(defaultSorobanConfig.contractId);
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") return;
+    const sections = navLinks
+      .map((link) => document.querySelector<HTMLElement>(link.href))
+      .filter((section): section is HTMLElement => section !== null);
+    const observer = new IntersectionObserver((entries) => {
+      const visibleSection = entries
+        .filter((entry) => entry.isIntersecting)
+        .sort((first, second) => first.boundingClientRect.top - second.boundingClientRect.top)[0];
+      if (visibleSection) setActiveSection(visibleSection.target.id);
+    }, { rootMargin: "-16% 0px -70% 0px", threshold: 0 });
+    sections.forEach((section) => observer.observe(section));
+    return () => observer.disconnect();
+  }, []);
 
   async function handleFile(file?: File) {
     setFileError("");
@@ -231,9 +248,9 @@ function App() {
         </a>
         <div className="workspace-label">WORKSPACE</div>
         <nav className="side-nav" aria-label="Main navigation">
-          {navLinks.map((link, index) => (
-            <a key={link.href} className={`nav-link${index === 0 ? " selected" : ""}`} href={link.href}>
-              {link.icon}<span>{link.label}</span>{index === 0 && <span className="nav-indicator" />}
+          {navLinks.map((link) => (
+            <a key={link.href} className={`nav-link${activeSection === link.href.slice(1) ? " selected" : ""}`} href={link.href} aria-current={activeSection === link.href.slice(1) ? "location" : undefined}>
+              {link.icon}<span>{link.label}</span>{activeSection === link.href.slice(1) && <span className="nav-indicator" />}
             </a>
           ))}
         </nav>
@@ -255,7 +272,7 @@ function App() {
               <button className="wallet-connected" onClick={() => void handleDisconnect()} disabled={walletBusy} aria-label={`Disconnect wallet ${shortAddress(wallet.address)}`}>
                 <span className="wallet-state"><span className="wallet-orb"><span /></span><span>Connected</span></span>
                 <span className="wallet-address">{shortAddress(wallet.address)}</span>
-                <span className="wallet-menu-dot">···</span>
+                <span className="wallet-menu-dot">Disconnect</span>
               </button>
             ) : (
               <button className="button button-primary connect-button" onClick={() => void handleConnect()} disabled={walletBusy}>
@@ -266,38 +283,38 @@ function App() {
           </div>
         </header>
 
-        <main id="overview" className="content">
-          <section className="welcome-row">
+        <main className="content">
+          <section id="overview" className="welcome-row">
             <div>
-              <div className="eyebrow"><span className="eyebrow-rule" />DOCUMENT INTEGRITY WORKSPACE</div>
-              <h1>Good afternoon<span className="title-period">.</span></h1>
-              <p className="welcome-copy">Create a verifiable fingerprint for any document. The file stays on your device.</p>
+              <div className="eyebrow"><span className="eyebrow-rule" />DOCUMENT INTEGRITY</div>
+              <h1>Check a document<span className="title-period">.</span></h1>
+              <p className="welcome-copy">Create a SHA-256 fingerprint and check it against Stellar Testnet. Your file stays on this device.</p>
             </div>
-            <div className="secure-chip"><span className="secure-icon"><ShieldIcon /></span><span><strong>Private by design</strong><small>Hashing happens locally</small></span></div>
+            <div className="secure-chip"><span className="secure-icon"><ShieldIcon /></span><span><strong>File stays local</strong><small>No upload or cloud storage</small></span></div>
           </section>
 
           <section className="summary-grid" aria-label="Workspace overview">
             <article className="summary-card">
-              <div className="summary-heading"><span>DOCUMENTS</span><span className="summary-icon indigo"><FileIcon /></span></div>
-              <div className="summary-value">—</div>
-              <div className="summary-caption">No registry records loaded</div>
+              <div className="summary-heading"><span>FILE HANDLING</span><span className="summary-icon indigo"><FileIcon /></span></div>
+              <div className="summary-value">Local</div>
+              <div className="summary-caption">No file list is saved</div>
             </article>
             <article className="summary-card">
-              <div className="summary-heading"><span>VERIFICATION</span><span className="summary-icon mint"><ShieldIcon /></span></div>
-              <div className="summary-value">{contractReady ? "Ready" : "Setup"}</div>
-              <div className="summary-caption">Read-only check · Testnet</div>
+              <div className="summary-heading"><span>STELLAR REGISTRY</span><span className="summary-icon mint"><ShieldIcon /></span></div>
+              <div className="summary-value">{contractReady ? "Configured" : "Setup"}</div>
+              <div className="summary-caption">{contractReady ? "Testnet contract" : "Contract ID required"}</div>
             </article>
             <article className="summary-card">
-              <div className="summary-heading"><span>RECENT ACTIVITY</span><span className="summary-icon amber"><ActivityIcon /></span></div>
-              <div className="summary-value">—</div>
-              <div className="summary-caption">No activity to display</div>
+              <div className="summary-heading"><span>WALLET</span><span className="summary-icon amber"><WalletIcon /></span></div>
+              <div className="summary-value">{wallet ? "Connected" : "Connect"}</div>
+              <div className="summary-caption">{wallet ? shortAddress(wallet.address) : "Needed for registry actions"}</div>
             </article>
           </section>
 
           {walletError && <div className="inline-alert error-alert" role="alert"><span className="alert-symbol">!</span><span>{walletError}</span><button onClick={() => setWalletError("")} aria-label="Dismiss wallet message">×</button></div>}
 
           <div className="section-heading" id="documents">
-            <div><div className="section-kicker">GET STARTED</div><h2>Prepare a document</h2></div>
+            <div><div className="section-kicker">LOCAL CHECK</div><h2>Choose a document</h2></div>
             <div className="local-badge"><span className="local-lock"><Icon><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></Icon></span>LOCAL ONLY</div>
           </div>
 
@@ -323,7 +340,7 @@ function App() {
               <button className="button button-secondary browse-button" onClick={() => fileInputRef.current?.click()} disabled={hashing}>
                 {hashing ? <><span className="button-spinner dark-spinner" /> Hashing…</> : fileResult ? "Choose another file" : "Choose a file"}
               </button>
-              <div className="dropzone-footnote"><span className="tiny-lock"><Icon><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></Icon></span>Nothing leaves this browser. No upload or storage.</div>
+              <div className="dropzone-footnote"><span className="tiny-lock"><Icon><rect x="5" y="10" width="14" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></Icon></span>File contents stay on this device. No upload or storage.</div>
             </div>
 
             <div className="digest-panel">
@@ -352,11 +369,11 @@ function App() {
             <div className="operation-grid">
               <article className="operation-card">
                 <div className="operation-number">01</div><div className="operation-title-row"><span className="operation-icon mint"><FileIcon /></span><h3>Register digest</h3></div>
-                <p>Store the document and encrypted-metadata fingerprints with the connected owner address. The original file is never sent.</p>
+                <p>Register this file's fingerprint and an encrypted-metadata fingerprint under your wallet address. The original file is never sent.</p>
                 <label className="metadata-field" htmlFor="metadata-digest">
                   <span>Encrypted-metadata fingerprint <strong>Required</strong></span>
                   <input id="metadata-digest" value={metadataDigest} onChange={(event) => setMetadataDigest(event.currentTarget.value)} placeholder="64 hexadecimal characters" maxLength={64} autoCapitalize="none" spellCheck={false} aria-invalid={Boolean(metadataDigest) && !metadataDigestValid} />
-                  <small>Generate this SHA-256 fingerprint from metadata encrypted outside Vaultora. This app does not encrypt or upload metadata.</small>
+                  <small>This version does not encrypt metadata. Enter its SHA-256 fingerprint if you already have one.</small>
                   {metadataDigest && !metadataDigestValid && <em>Enter exactly 64 hexadecimal characters.</em>}
                 </label>
                 <button className="button button-operation" disabled={!contractReady || !wallet || !fileResult || !metadataDigestValid || Boolean(activeOperation) || networkMismatch || networkUnavailable} onClick={() => void runContractOperation("register")}>
@@ -365,7 +382,7 @@ function App() {
               </article>
               <article className="operation-card">
                 <div className="operation-number">02</div><div className="operation-title-row"><span className="operation-icon violet"><ShieldIcon /></span><h3>Verify digest</h3></div>
-                <p>Check whether this fingerprint is registered to the connected wallet address. This is an unsigned read-only RPC simulation.</p>
+                <p>Check whether this fingerprint is registered to your wallet. The read-only check does not ask for a signature.</p>
                 <button className="button button-operation" disabled={!contractReady || !wallet || !fileResult || Boolean(activeOperation)} onClick={() => void runContractOperation("verify")}>
                   {activeOperation === "verify" ? "Checking…" : "Check registry (read-only)"}<ArrowUpRight />
                 </button>
@@ -377,27 +394,27 @@ function App() {
                 <small>No transaction was submitted and no wallet authorization was requested. Fingerprint: <code>{verificationResult.digest}</code></small>
               </div>
             </div>}
-            {!wallet && <div className="wallet-callout"><span className="wallet-callout-icon"><Icon><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H20v14H5.5A2.5 2.5 0 0 1 3 16.5Z" /><path d="M3 8h14a3 3 0 0 1 3 3v2h-4a2 2 0 0 0 0 4h4" /><path d="M16 13h.01" /></Icon></span><span><strong>Connect your wallet to continue</strong><small>Registration needs Testnet authorization; a read-only check uses its address without signing.</small></span><button className="text-button" onClick={() => void handleConnect()} disabled={walletBusy}>Connect <ArrowUpRight /></button></div>}
+            {!wallet && <div className="wallet-callout"><span className="wallet-callout-icon"><Icon><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H20v14H5.5A2.5 2.5 0 0 1 3 16.5Z" /><path d="M3 8h14a3 3 0 0 1 3 3v2h-4a2 2 0 0 0 0 4h4" /><path d="M16 13h.01" /></Icon></span><span><strong>Connect a Stellar wallet</strong><small>Registration needs Testnet approval. Verification uses your public address and does not request a signature.</small></span><button className="text-button" onClick={() => void handleConnect()} disabled={walletBusy}>Connect <ArrowUpRight /></button></div>}
             {transactionIsVisible && <TransactionStatus state={transaction} note={transactionNote} operation={lastOperation} />}
           </section>
 
           <section className="activity-section" id="activity">
-            <div className="activity-heading"><div><div className="panel-kicker">WORKSPACE HISTORY</div><h2>Recent activity</h2></div><button className="quiet-button" disabled>View all <ArrowUpRight /></button></div>
+            <div className="activity-heading"><div><div className="panel-kicker">TESTNET</div><h2>Recent transactions</h2></div></div>
             {transaction.hash ? (
               <div className="activity-empty activity-record"><div className="activity-empty-mark"><ActivityIcon /></div><div><strong>{lastOperation === "register" ? "Digest registration" : "Digest verification"}</strong><p>{transaction.stage === "confirmed" ? "Confirmed on Stellar Testnet" : transaction.stage === "failed" ? "Transaction attempt failed" : "Submitted to Stellar Testnet"}</p></div><a className="activity-record-link" href={explorerTransactionUrl(transaction.hash)} target="_blank" rel="noreferrer">View transaction <ArrowUpRight /></a></div>
             ) : (
-              <div className="activity-empty"><div className="activity-empty-mark"><ActivityIcon /></div><div><strong>No activity yet</strong><p>Your contract operations will appear here after a transaction is submitted.</p></div></div>
+              <div className="activity-empty"><div className="activity-empty-mark"><ActivityIcon /></div><div><strong>No transactions yet</strong><p>Submitted registrations appear here during this session.</p></div></div>
             )}
           </section>
 
           <section className="foundation-section" id="foundation">
-            <div className="activity-heading"><div><div className="panel-kicker">PHASE 0 STATUS</div><h2>Workspace foundations</h2></div><span className="testnet-tag">IN PROGRESS</span></div>
+            <div className="activity-heading"><div><div className="panel-kicker">PRODUCT STATUS</div><h2>What is available</h2></div><span className="testnet-tag">EARLY VERSION</span></div>
             <div className="foundation-grid">
-              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Project spaces</h3><p>No project spaces are stored yet. Multi-project organization is not implemented.</p></article>
-              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Saved links</h3><p>No link library exists in this foundation. This interface does not retain a document catalogue.</p></article>
-              <article className="foundation-card"><span className="foundation-status active">AVAILABLE</span><h3>Security boundary</h3><p>File hashing runs locally. The contract stores fingerprints, owner address and registration time, never the original file.</p></article>
-              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Recovery</h3><p>No recovery secrets or account-recovery shortcut are implemented. Recovery design remains documented, not operational.</p></article>
-              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Settings</h3><p>Network and contract configuration currently come from environment variables; an in-app settings screen is not implemented.</p></article>
+              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Project spaces</h3><p>Group related documents by project.</p></article>
+              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Saved links</h3><p>Keep reference links beside your documents.</p></article>
+              <article className="foundation-card"><span className="foundation-status active">AVAILABLE</span><h3>File integrity</h3><p>Hash files in your browser. The registry stores fingerprints and record details, not original files.</p></article>
+              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Recovery</h3><p>Account recovery is under design. No recovery flow is available yet.</p></article>
+              <article className="foundation-card"><span className="foundation-status planned">PLANNED</span><h3>Settings</h3><p>Network and contract settings are managed by the site deployment.</p></article>
             </div>
           </section>
 
