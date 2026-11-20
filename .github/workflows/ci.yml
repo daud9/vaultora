@@ -38,7 +38,18 @@ jobs:
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
       - name: Install pinned Stellar CLI
-        run: cargo install --locked --version 30.0.1 stellar-cli
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/stellar-cli-30.0.1-x86_64-unknown-linux-gnu.tar.gz"
+          curl --fail --location --retry 3 --silent --show-error \
+            https://github.com/stellar/stellar-cli/releases/download/v30.0.1/stellar-cli-30.0.1-x86_64-unknown-linux-gnu.tar.gz \
+            --output "$archive"
+          echo "48c70074020e09af0a3ebbd2bf62d53c9aec47935e49a112d3cd90fb4e37658f  $archive" | sha256sum --check --strict
+          tar --extract --gzip --file "$archive" --directory "$RUNNER_TEMP"
+          install --directory "$HOME/.local/bin"
+          install --mode 0755 "$RUNNER_TEMP/stellar" "$HOME/.local/bin/stellar"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+          "$HOME/.local/bin/stellar" --version
       - run: cd contracts/document-registry && stellar contract build --locked
 
   secrets:
