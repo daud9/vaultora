@@ -1,0 +1,17 @@
+{
+  "name": "vaultora",
+  "private": true,
+  "packageManager": "pnpm@11.25.0",
+  "engines": {
+    "node": ">=22.12.0"
+  },
+  "scripts": {
+    "web:dev": "pnpm --dir apps/web dev",
+    "web:check": "pnpm --dir apps/web typecheck && pnpm --dir apps/web test && pnpm --dir apps/web build",
+    "contracts:fmt": "cargo fmt --all -- --check",
+    "contracts:clippy": "cargo clippy --workspace --all-targets -- -D warnings",
+    "contracts:test": "cargo test --workspace",
+    "contracts:build": "cd contracts/document-registry && stellar contract build --locked",
+    "verify": "pnpm run web:check && pnpm run contracts:fmt && pnpm run contracts:test && pnpm run contracts:build"
+  }
+}

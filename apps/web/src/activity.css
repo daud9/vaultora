@@ -1,0 +1,6 @@
+.activity-record-link { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; color: #a5dcc4; font-size: 8px; white-space: nowrap; }
+.activity-record-link svg { width: 11px; height: 11px; }
+@media (max-width: 570px) {
+  .activity-record { flex-wrap: wrap; }
+  .activity-record-link { margin-left: 43px; }
+}

@@ -1,0 +1,25 @@
+# Environment files and local credentials
+.env
+.env.*
+!.env.example
+*.seed
+*.secret
+*.key
+*.pem
+
+# JavaScript dependencies and builds
+node_modules/
+.pnpm-store/
+dist/
+coverage/
+
+# Rust/Soroban build output
+target/
+
+# Local Testnet deployment metadata; contains public identifiers but is local state
+.deployments/
+
+# Editor and operating-system noise
+.DS_Store
+.vscode/
+.idea/

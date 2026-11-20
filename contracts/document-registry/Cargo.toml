@@ -1,0 +1,18 @@
+[package]
+name = "document-registry"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.84.0"
+description = "Soroban document fingerprint registry"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+soroban-sdk = "=29.0.1"
+
+[dev-dependencies]
+soroban-sdk = { version = "=29.0.1", features = ["testutils"] }
+
+[features]
+default = []
