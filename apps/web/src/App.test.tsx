@@ -1,6 +1,7 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { describe, expect, it, vi } from "vitest";
 import App from "./App";
+import * as wallet from "./lib/wallet";
 
 describe("dashboard interface copy", () => {
   it("uses direct labels and contains no em dashes", () => {
@@ -17,5 +18,23 @@ describe("dashboard interface copy", () => {
 
     expect(screen.getByRole("heading", { name: "What is available" })).toBeTruthy();
     expect(screen.getByText(/No recovery flow is available yet/)).toBeTruthy();
+  });
+
+  it("replaces em dashes in wallet errors before showing them", async () => {
+    const emDash = String.fromCharCode(0x2014);
+    const connectWallet = vi.spyOn(wallet, "connectWallet").mockRejectedValue(
+      new Error(`Soroban transport${emDash}rejected`),
+    );
+
+    try {
+      render(<App />);
+      fireEvent.click(screen.getByRole("button", { name: "Connect wallet" }));
+
+      const alert = await screen.findByRole("alert");
+      expect(alert.textContent).toContain("Soroban transport; rejected");
+      expect(alert.textContent).not.toContain(emDash);
+    } finally {
+      connectWallet.mockRestore();
+    }
   });
 });

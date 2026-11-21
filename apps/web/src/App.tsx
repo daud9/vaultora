@@ -16,6 +16,7 @@ import {
   walletErrorMessage,
   type ConnectedWallet,
 } from "./lib/wallet";
+import { cleanInterfaceMessage } from "./lib/uiText";
 
 type IconProps = SVGProps<SVGSVGElement>;
 
@@ -113,7 +114,7 @@ function App() {
       const result = await sha256File(file);
       setFileResult(result);
     } catch (error) {
-      setFileError(error instanceof Error ? error.message : "Could not read this file.");
+      setFileError(cleanInterfaceMessage(error instanceof Error ? error.message : "Could not read this file."));
     } finally {
       setHashing(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -214,7 +215,7 @@ function App() {
         setVerificationResult({
           digest: fileResult.digest,
           owner: wallet.address,
-          error: error instanceof Error ? error.message : "The read-only check failed.",
+          error: cleanInterfaceMessage(error instanceof Error ? error.message : "The read-only check failed."),
         });
       } else {
         const transactionHash =
@@ -224,7 +225,7 @@ function App() {
             : undefined;
         dispatchTransaction({
           type: "FAILED",
-          message: error instanceof Error ? error.message : "The contract operation failed.",
+          message: cleanInterfaceMessage(error instanceof Error ? error.message : "The contract operation failed."),
           hash: transactionHash,
         });
       }
@@ -390,7 +391,7 @@ function App() {
             </div>
             {verificationResult && <div className={`verification-result${"error" in verificationResult ? " verification-error" : ""}`} role="status" aria-live="polite">
               <div><strong>{"error" in verificationResult ? "Read-only check failed" : verificationResult.found ? "Record found" : "No record found"}</strong>
-                <p>{"error" in verificationResult ? verificationResult.error : `Checked ${shortAddress(verificationResult.owner)} against the configured registry.`}</p>
+                <p>{"error" in verificationResult ? cleanInterfaceMessage(verificationResult.error) : `Checked ${shortAddress(verificationResult.owner)} against the configured registry.`}</p>
                 <small>No transaction was submitted and no wallet authorization was requested. Fingerprint: <code>{verificationResult.digest}</code></small>
               </div>
             </div>}
@@ -436,9 +437,9 @@ function TransactionStatus({ state, note, operation }: { state: ReturnType<typeo
       </div>
       <div className="transaction-body">
         <div className="transaction-topline"><strong>{label}</strong>{operation && <span>{operation === "register" ? "Register digest" : "Verify digest"}</span>}</div>
-        <p>{isFailed ? "No successful contract execution was confirmed." : state.message || note || (state.stage === "awaiting_authorization" ? "Review the transaction details in your wallet." : "Preparing the on-chain request." )}</p>
+        <p>{isFailed ? "No successful contract execution was confirmed." : cleanInterfaceMessage(state.message || note || (state.stage === "awaiting_authorization" ? "Review the transaction details in your wallet." : "Preparing the on-chain request." ))}</p>
         {state.hash && <div className="transaction-hash"><code>{state.hash}</code><a href={explorerTransactionUrl(state.hash)} target="_blank" rel="noreferrer">View on Stellar Expert <ArrowUpRight /></a></div>}
-        {isFailed && <div className="transaction-error">{state.message}</div>}
+        {isFailed && <div className="transaction-error">{state.message && cleanInterfaceMessage(state.message)}</div>}
       </div>
       {state.stage === "confirmed" && <span className="confirmed-tag">CONFIRMED</span>}
     </section>

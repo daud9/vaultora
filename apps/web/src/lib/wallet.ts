@@ -3,6 +3,7 @@ import {
   getNetworkDetails,
   requestAccess,
 } from "@stellar/varial-sdk";
+import { cleanInterfaceMessage } from "./uiText";
 
 export interface WalletNetwork {
   network: string;
@@ -69,11 +70,11 @@ export async function disconnectWallet(): Promise<void> {
 
 export function walletErrorMessage(error: unknown): string {
   if (error instanceof Error) {
-    const message = error.message.trim();
+    const message = cleanInterfaceMessage(error.message.trim());
     if (/extension|wallet.*not found|not installed|unavailable/i.test(message)) {
       return "Could not reach Varial. Check that the wallet extension is installed and unlocked, then try again.";
     }
-    return message || "Wallet connection failed. Try again.";
+    return cleanInterfaceMessage(message || "Wallet connection failed. Try again.");
   }
   return "Wallet connection failed. Try again.";
 }
