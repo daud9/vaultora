@@ -111,6 +111,25 @@ describe("Soroban contract arguments and verification", () => {
     expect(server.sendTransaction).not.toHaveBeenCalled();
     expect(onStage).not.toHaveBeenCalled();
   });
+
+  it("rejects a non-Testnet RPC or passphrase before making an RPC request", async () => {
+    const owner = Keypair.random().publicKey();
+    const server = { getAccount: vi.fn() };
+    await expect(invokeDocumentContract({
+      operation: "verify",
+      digest: "01".repeat(32),
+      sourceAddress: owner,
+      config: {
+        rpcUrl: "https://soroban-mainnet.stellar.org",
+        networkPassphrase: "Public Global Stellar Network ; September 2015",
+        contractId: StrKey.encodeContract(new Uint8Array(32).fill(3)),
+        registerMethod: "register_document",
+        verifyMethod: "verify_document",
+      },
+      server: server as unknown as rpc.Server,
+    })).rejects.toThrow(/Stellar Testnet only/i);
+    expect(server.getAccount).not.toHaveBeenCalled();
+  });
 });
 
 describe("Varial wallet adapter errors", () => {

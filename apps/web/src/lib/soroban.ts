@@ -9,7 +9,7 @@ import {
   xdr,
 } from "@stellar/stellar-sdk";
 import { signTransaction } from "@stellar/varial-sdk";
-import { type DocumentOperation, type SorobanConfig } from "./sorobanConfig";
+import { STELLAR_TESTNET_PASSPHRASE, STELLAR_TESTNET_RPC_URL, type DocumentOperation, type SorobanConfig } from "./sorobanConfig";
 export type { DocumentOperation, SorobanConfig } from "./sorobanConfig";
 
 export type ContractOperationResult =
@@ -71,6 +71,9 @@ export async function invokeDocumentContract(args: {
   server?: rpc.Server;
 }): Promise<ContractOperationResult> {
   const { operation, digest, metadataDigest, sourceAddress, config, onStage } = args;
+  if (config.rpcUrl !== STELLAR_TESTNET_RPC_URL || config.networkPassphrase !== STELLAR_TESTNET_PASSPHRASE) {
+    throw new Error("VAULTORA supports Stellar Testnet only. The RPC URL and network passphrase are fixed.");
+  }
   if (!config.contractId.trim()) {
     throw new Error("No contract is configured. Set VITE_STELLAR_CONTRACT_ID to enable on-chain actions.");
   }
