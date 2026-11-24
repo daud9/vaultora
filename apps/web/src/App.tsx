@@ -198,20 +198,40 @@ function Brand() {
 }
 
 function AccessScreen({
-  mode, busy, error, onSubmit, cloudControls, onCancelRestore,
-}: { mode: "checking" | "setup" | "locked" | "restore"; busy: boolean; error: string; onSubmit: (passphrase: string, confirmation?: string) => void; cloudControls: ReactNode; onCancelRestore: () => void }) {
+  mode, busy, error, onSubmit, cloudControls, onCancelRestore, wallet, walletBusy, walletError,
+  onConnectWallet, onContinueWithoutBackup,
+}: { mode: "checking" | "setup-wallet" | "setup" | "setup-backup" | "locked" | "restore"; busy: boolean; error: string; onSubmit: (passphrase: string, confirmation?: string) => void; cloudControls: ReactNode; onCancelRestore: () => void; wallet: ConnectedWallet | null; walletBusy: boolean; walletError: string; onConnectWallet: () => void; onContinueWithoutBackup?: () => void }) {
   const [passphrase, setPassphrase] = useState("");
   const [confirmation, setConfirmation] = useState("");
+  const [showCloudRestore, setShowCloudRestore] = useState(false);
   if (mode === "checking") return <main className="access-shell"><div className="access-card"><Brand /><p className="muted">Checking this device…</p></div></main>;
+  if (mode === "setup-wallet") return <main className="access-shell"><section className="access-card">
+    <Brand />
+    <span className="access-kicker"><Icon name="wallet" size={15} /> FIRST USE · STEP 1 OF 3</span>
+    <h1>Connect your wallet</h1>
+    <p>Connect a wallet to start VAULTORA. Next, set your vault passphrase and add a backup email. Email sign-in can access encrypted cloud copies, but only your passphrase can decrypt files. Soroban actions still require wallet authorization.</p>
+    {error && <div role="alert" className="form-error"><Icon name="alert" size={16} />{error}</div>}
+    {walletError && <div role="alert" className="form-error"><Icon name="alert" size={16} />{walletError}</div>}
+    <button className="button button-primary access-submit" type="button" onClick={onConnectWallet} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Connect Varial wallet"}</button>
+  </section></main>;
+  if (mode === "setup-backup") return <main className="access-shell"><section className="access-card">
+    <Brand />
+    <span className="access-kicker"><Icon name="lock" size={15} /> FIRST USE · STEP 3 OF 3</span>
+    <h1>Add a backup email</h1>
+    <p>Use email sign-in to access encrypted cloud copies. Your vault passphrase is still required to view or download files, and email cannot authorize Soroban actions.</p>
+    {cloudControls}
+    {onContinueWithoutBackup && <button className="button button-secondary access-submit" type="button" onClick={onContinueWithoutBackup}>Continue with device-only vault</button>}
+  </section></main>;
   const create = mode === "setup";
   const restore = mode === "restore";
   return (
     <main className="access-shell">
       <section className="access-card">
         <Brand />
-        <span className="access-kicker"><Icon name={create ? "spark" : "lock"} size={15} /> {restore ? "ENCRYPTED CLOUD VAULT" : "ENCRYPTED ON THIS DEVICE"}</span>
+        <span className="access-kicker"><Icon name={create ? "spark" : "lock"} size={15} /> {restore ? "ENCRYPTED CLOUD VAULT" : create ? "FIRST USE · STEP 2 OF 3" : "ENCRYPTED ON THIS DEVICE"}</span>
         <h1>{create ? "Set up your vault" : restore ? "Restore your cloud vault" : "Unlock your vault"}</h1>
-        <p>{create ? "Choose a vault passphrase. It encrypts your files and private details before they are saved in this browser." : restore ? "Use the vault passphrase that protects your encrypted cloud documents. Supabase sign-in does not decrypt them." : "Enter the vault passphrase you chose on this device. It is not sent to a server."}</p>
+        <p>{create ? "Choose a vault passphrase. It encrypts your files and private details before they are saved in this browser." : restore ? "Use the vault passphrase that protects your encrypted cloud documents. Email sign-in does not decrypt them." : "Enter the vault passphrase you chose on this device. It is not sent to a server."}</p>
+        {create && wallet && <div className="access-wallet-status"><Icon name="wallet" size={15} /><span>Wallet connected</span><code>{shortAddress(wallet.address)}</code></div>}
         <form onSubmit={(event) => { event.preventDefault(); onSubmit(passphrase, create ? confirmation : undefined); }}>
           <label className="field-label" htmlFor="vault-passphrase">Vault passphrase</label>
           <input id="vault-passphrase" type="password" autoComplete={create ? "new-password" : "current-password"} value={passphrase} onChange={(event) => setPassphrase(event.currentTarget.value)} minLength={12} required autoFocus />
@@ -220,14 +240,15 @@ function AccessScreen({
           <button className="button button-primary access-submit" type="submit" disabled={busy}>{busy ? "Working…" : create ? "Create encrypted vault" : restore ? "Restore encrypted documents" : "Unlock vault"}</button>
         </form>
         {restore && <button className="text-link access-cancel-restore" onClick={onCancelRestore}>Use device-only setup instead</button>}
-        {cloudControls}
+        {create && <button className="text-link access-cancel-restore" type="button" onClick={() => setShowCloudRestore((value) => !value)}>{showCloudRestore ? "Hide cloud restore" : "Already have an encrypted cloud backup?"}</button>}
+        {(!create || showCloudRestore) && cloudControls}
       </section>
     </main>
   );
 }
 
 function App() {
-  const [accessMode, setAccessMode] = useState<"checking" | "setup" | "locked" | "restore">("checking");
+  const [accessMode, setAccessMode] = useState<"checking" | "setup-wallet" | "setup" | "setup-backup" | "locked" | "restore">("checking");
   const [session, setSession] = useState<VaultSession | null>(null);
   const sessionRef = useRef<VaultSession | null>(null);
   const [accessBusy, setAccessBusy] = useState(false);
@@ -319,7 +340,7 @@ function App() {
 
   useEffect(() => {
     let alive = true;
-    void hasLocalVault().then((exists) => { if (alive) setAccessMode(exists ? "locked" : "setup"); }).catch(() => { if (alive) { setAccessMode("setup"); setAccessError("This browser could not open local vault storage."); } });
+    void hasLocalVault().then((exists) => { if (alive) setAccessMode(exists ? "locked" : "setup-wallet"); }).catch(() => { if (alive) { setAccessMode("setup-wallet"); setAccessError("This browser could not open local vault storage."); } });
     const onHashChange = () => setSection(sectionFromHash());
     window.addEventListener("hashchange", onHashChange);
     return () => { alive = false; window.removeEventListener("hashchange", onHashChange); };
@@ -328,7 +349,11 @@ function App() {
   useEffect(() => subscribeToCloudAuth((email) => {
     setCloudAccount(email);
     if (!email) setCloudVaultInfo(null);
-  }), []);
+    if (email && accessMode === "setup-backup") {
+      setAccessMode("locked");
+      setNotice("Backup email connected. Your passphrase remains required to decrypt files.");
+    }
+  }), [accessMode]);
 
   useEffect(() => {
     if (!session) return undefined;
@@ -398,7 +423,7 @@ function App() {
     setCloudBusy(true); setCloudError(""); setCloudMessage("");
     try {
       await requestCloudSignInLink(email);
-      setCloudMessage("Sign-in link sent. Open it on this device to connect your cloud account.");
+      setCloudMessage("Sign-in link sent. Open it on this device to connect your backup email.");
     } catch (error) {
       setCloudError(cleanInterfaceMessage(error instanceof Error ? error.message : "The cloud sign-in link could not be sent."));
     } finally { setCloudBusy(false); }
@@ -466,7 +491,7 @@ function App() {
         await refreshData(openedSession);
         await recordActivity(openedSession, { type: "vault.created", at: new Date().toISOString(), entityId: "vault", label: "Encrypted vault created" });
         await refreshData(openedSession);
-        setSession(openedSession); setAccessMode("locked");
+        setSession(openedSession); setAccessMode("setup-backup");
         setNotice("Encrypted vault created on this device.");
       } else if (accessMode === "restore") {
         if (!cloudConfigured || !cloudAccount || !cloudVaultInfo?.vaultSalt) throw new Error("Connect a cloud account and check its encrypted documents before restoring.");
@@ -508,14 +533,20 @@ function App() {
 
   async function handleConnect() {
     setWalletBusy(true); setWalletError("");
-    try { setWallet(await connectWallet()); }
+    try {
+      setWallet(await connectWallet());
+      if (accessMode === "setup-wallet") { setAccessMode("setup"); setAccessError(""); }
+    }
     catch (error) { setWalletError(walletErrorMessage(error)); }
     finally { setWalletBusy(false); }
   }
 
   async function handleDisconnect() {
     setWalletBusy(true); setWalletError("");
-    try { await disconnectWallet(); setWallet(null); }
+    try {
+      await disconnectWallet(); setWallet(null);
+      if (accessMode === "setup") setAccessMode("setup-wallet");
+    }
     catch (error) { setWalletError(walletErrorMessage(error)); }
     finally { setWalletBusy(false); }
   }
@@ -997,7 +1028,7 @@ function App() {
     }
   };
 
-  if (!session) return <AccessScreen mode={accessMode} busy={accessBusy} error={accessError} onSubmit={(passphrase, confirmation) => void handleAccess(passphrase, confirmation)} cloudControls={renderCloudControls("access")} onCancelRestore={() => setAccessMode("setup")} />;
+  if (!session || accessMode === "setup-wallet" || accessMode === "setup-backup") return <AccessScreen mode={accessMode} busy={accessBusy} error={accessError} onSubmit={(passphrase, confirmation) => void handleAccess(passphrase, confirmation)} cloudControls={renderCloudControls("access")} onCancelRestore={() => setAccessMode("setup")} wallet={wallet} walletBusy={walletBusy} walletError={walletError} onConnectWallet={() => void handleConnect()} onContinueWithoutBackup={!cloudConfigured ? () => setAccessMode("locked") : undefined} />;
 
   return (
     <div className={`vault-shell${collapsed ? " rail-collapsed" : ""}`}>
@@ -1105,20 +1136,20 @@ function CloudSyncPanel({
   const access = variant === "access";
   return <section className={`cloud-sync-panel${access ? " cloud-access" : " panel settings-card"}`}>
     <span className="section-kicker">PRIVATE CLOUD</span>
-    <h2>Encrypted document sync</h2>
-    <p className="panel-copy">Only encrypted file bytes, encrypted details, and wrapped keys are stored remotely. Your passphrase is never sent.</p>
+    <h2>{access ? "Backup email" : "Encrypted document sync"}</h2>
+    <p className="panel-copy">{access ? "Email sign-in can access encrypted cloud copies, but your passphrase is still needed to decrypt them. Email does not authorize Soroban actions." : "Only encrypted file bytes, encrypted details, and wrapped keys are stored remotely. Your passphrase is never sent."}</p>
     {!configured ? <div className="cloud-state"><strong>Not configured</strong><small>This deployment has no Supabase project settings yet. The device-only vault remains available.</small></div> : account ? <>
-      <div className="cloud-state"><strong>Cloud account connected</strong><small>{account} · Account access identifies the storage owner, not the vault key.</small></div>
+      <div className="cloud-state"><strong>{access ? "Backup email connected" : "Cloud account connected"}</strong><small>{account} · Account access identifies the storage owner, not the vault key.</small></div>
       <div className="cloud-panel-actions"><button className="button button-secondary" onClick={onInspect} disabled={busy}>{busy ? "Checking…" : "Check cloud documents"}</button>{canSync && <button className="button button-primary" onClick={onSync} disabled={busy}>{busy ? "Syncing…" : "Sync encrypted documents"}</button>}</div>
       {info && <p className="cloud-detail">{info.documentCount} encrypted document{info.documentCount === 1 ? "" : "s"} in this account. Project spaces, saved links, and activity remain on this device.</p>}
       {canRestore && <p className="cloud-detail">Use the same vault passphrase to restore these documents on this device.</p>}
-      {restoring && <p className="cloud-detail">Enter the vault passphrase above. Supabase sign-in cannot decrypt these files.</p>}
+      {restoring && <p className="cloud-detail">Enter the vault passphrase above. Email sign-in cannot decrypt these files.</p>}
       {!canSync && !canRestore && !restoring && <p className="cloud-detail">Unlock this device vault before syncing its encrypted documents.</p>}
       <button className="text-link cloud-signout" onClick={onSignOut} disabled={busy}>Sign out of cloud account</button>
     </> : <form className="cloud-auth-form" onSubmit={(event) => { event.preventDefault(); onRequestLink(email); }}>
-      <label className="field-label" htmlFor={`cloud-email-${variant}`}>Email for cloud sign-in</label>
+      <label className="field-label" htmlFor={`cloud-email-${variant}`}>Backup email</label>
       <input id={`cloud-email-${variant}`} type="email" autoComplete="email" value={email} onChange={(event) => setEmail(event.currentTarget.value)} placeholder="you@example.com" required />
-      <button className="button button-secondary" type="submit" disabled={busy}>{busy ? "Sending…" : "Email a sign-in link"}</button>
+      <button className="button button-secondary" type="submit" disabled={busy}>{busy ? "Sending…" : "Email a backup sign-in link"}</button>
     </form>}
     {message && <p className="cloud-feedback" role="status">{message}</p>}
     {syncResult && variant === "settings" && <small className="cloud-feedback">Last sync: {syncResult.uploaded} uploaded, {syncResult.downloaded} downloaded, {syncResult.deleted} deletions.</small>}

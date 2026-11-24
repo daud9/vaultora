@@ -3,6 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import App from "./App";
 import * as localVault from "./lib/localVault";
+import * as supabaseVault from "./lib/supabaseVault";
 import * as wallet from "./lib/wallet";
 
 vi.mock("./lib/localVault", () => ({
@@ -25,6 +26,17 @@ vi.mock("./lib/localVault", () => ({
   saveWorkspace: vi.fn(),
   unlockVaultSession: vi.fn(),
   updateDocument: vi.fn(),
+}));
+
+vi.mock("./lib/supabaseVault", () => ({
+  decodeCloudBytes: vi.fn(),
+  inspectCloudVault: vi.fn(),
+  isSupabaseConfigured: vi.fn(() => false),
+  requestCloudSignInLink: vi.fn(),
+  signOutCloudAccount: vi.fn(),
+  subscribeToCloudAuth: vi.fn(() => () => undefined),
+  synchronizeEncryptedDocuments: vi.fn(),
+  validateCloudVaultPassphrase: vi.fn(),
 }));
 
 const session = {} as localVault.VaultSession;
@@ -51,10 +63,15 @@ function setEmptyVaultMocks() {
 async function createEmptyVault() {
   const user = userEvent.setup();
   render(<App />);
+  await screen.findByRole("heading", { name: "Connect your wallet" });
+  await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
   await screen.findByRole("heading", { name: "Set up your vault" });
   await user.type(screen.getByLabelText("Vault passphrase"), "correct horse battery staple");
   await user.type(screen.getByLabelText("Confirm passphrase"), "correct horse battery staple");
   await user.click(screen.getByRole("button", { name: "Create encrypted vault" }));
+  await screen.findByRole("heading", { name: "Add a backup email" });
+  expect(screen.getByText(/Email backup is not configured|no Supabase project settings/i)).toBeTruthy();
+  await user.click(screen.getByRole("button", { name: "Continue with device-only vault" }));
   await screen.findByRole("heading", { name: /Your documents, in your hands\./ });
   return user;
 }
@@ -63,11 +80,73 @@ beforeEach(() => {
   vi.restoreAllMocks();
   vi.clearAllMocks();
   setEmptyVaultMocks();
+  vi.mocked(supabaseVault.isSupabaseConfigured).mockReset().mockReturnValue(false);
+  vi.mocked(supabaseVault.subscribeToCloudAuth).mockReset().mockImplementation(() => () => undefined);
+  vi.mocked(supabaseVault.requestCloudSignInLink).mockReset().mockResolvedValue(undefined);
+  vi.spyOn(wallet, "connectWallet").mockResolvedValue({
+    address: "GABCDEFGHIJKLMNOPQRSTUVWXYZ234567ABCDEFGHIJKLMNOPQRSTUVWXYZ234567",
+    network: { network: "TESTNET", networkPassphrase: "Test SDF Network ; September 2015" },
+  });
   window.location.hash = "#overview";
 });
 
 describe("VAULTORA Phase 1 app", () => {
-  it("creates an empty encrypted local vault and shows real zero states without fabricated data", async () => {
+  it("requires a wallet connection before showing first-use passphrase setup", async () => {
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Connect your wallet" });
+    expect(screen.queryByLabelText("Vault passphrase")).toBeNull();
+    expect(localVault.createVaultSession).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+    expect(await screen.findByRole("heading", { name: "Set up your vault" })).toBeTruthy();
+    expect(screen.getByText(/Wallet connected/)).toBeTruthy();
+    expect(wallet.connectWallet).toHaveBeenCalledOnce();
+  });
+
+  it("completes configured first-use setup after backup-email sign-in", async () => {
+    const authListeners: Array<(email: string | null) => void> = [];
+    vi.mocked(supabaseVault.isSupabaseConfigured).mockReturnValue(true);
+    vi.mocked(supabaseVault.subscribeToCloudAuth).mockImplementation((onAccount) => {
+      authListeners.push(onAccount);
+      return () => undefined;
+    });
+    const user = userEvent.setup();
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Connect your wallet" });
+    await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+    await screen.findByRole("heading", { name: "Set up your vault" });
+    await user.type(screen.getByLabelText("Vault passphrase"), "correct horse battery staple");
+    await user.type(screen.getByLabelText("Confirm passphrase"), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: "Create encrypted vault" }));
+    await screen.findByRole("heading", { name: "Add a backup email" });
+    expect(screen.queryByRole("button", { name: "Continue with device-only vault" })).toBeNull();
+
+    await user.type(screen.getByLabelText("Backup email"), "backup@example.test");
+    await user.click(screen.getByRole("button", { name: "Email a backup sign-in link" }));
+    expect(await screen.findByRole("status")).toBeTruthy();
+    expect(supabaseVault.requestCloudSignInLink).toHaveBeenCalledWith("backup@example.test");
+
+    act(() => authListeners[authListeners.length - 1]?.("backup@example.test"));
+    expect(await screen.findByRole("heading", { name: /Your documents, in your hands\./ })).toBeTruthy();
+    expect(screen.getByText(/Backup email connected/)).toBeTruthy();
+  });
+
+  it("lets returning local vault users unlock without reconnecting their wallet", async () => {
+    vi.mocked(localVault.hasLocalVault).mockResolvedValue(true);
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Unlock your vault" });
+    expect(screen.queryByRole("button", { name: "Connect Varial wallet" })).toBeNull();
+
+    await user.type(screen.getByLabelText("Vault passphrase"), "correct horse battery staple");
+    await user.click(screen.getByRole("button", { name: "Unlock vault" }));
+    expect(await screen.findByRole("heading", { name: /Your documents, in your hands\./ })).toBeTruthy();
+    expect(wallet.connectWallet).not.toHaveBeenCalled();
+  });
+
+  it("creates an encrypted local vault and shows real zero states without fabricated data", async () => {
     await createEmptyVault();
 
     expect(localVault.createVaultSession).toHaveBeenCalledWith("correct horse battery staple");
@@ -148,17 +227,17 @@ describe("VAULTORA Phase 1 app", () => {
     expect(localVault.saveSavedLink).not.toHaveBeenCalled();
   });
 
-  it("sanitizes em dashes in wallet errors before displaying them", async () => {
+  it("sanitizes wallet errors and keeps first-use passphrase setup gated", async () => {
     const emDash = String.fromCharCode(0x2014);
-    const connectWallet = vi.spyOn(wallet, "connectWallet").mockRejectedValue(new Error(`Wallet request${emDash}rejected`));
-    try {
-      const user = await createEmptyVault();
-      await user.click(screen.getByRole("button", { name: "Connect wallet" }));
-      const alert = await screen.findByRole("alert");
-      expect(alert.textContent).toContain("Wallet request; rejected");
-      expect(alert.textContent).not.toContain(emDash);
-    } finally {
-      connectWallet.mockRestore();
-    }
+    vi.mocked(wallet.connectWallet).mockRejectedValueOnce(new Error(`Wallet request${emDash}rejected`));
+    const user = userEvent.setup();
+    render(<App />);
+    await screen.findByRole("heading", { name: "Connect your wallet" });
+    await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain("Wallet request; rejected");
+    expect(alert.textContent).not.toContain(emDash);
+    expect(screen.queryByLabelText("Vault passphrase")).toBeNull();
+    expect(localVault.createVaultSession).not.toHaveBeenCalled();
   });
 });

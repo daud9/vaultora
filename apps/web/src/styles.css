@@ -55,6 +55,9 @@ textarea { min-height: 84px; padding: 10px 12px; resize: vertical; }
 input::placeholder, textarea::placeholder { color: #65717b; }
 .field-hint { color: var(--muted); font-size: 11px; line-height: 1.55; }
 .access-submit { width: 100%; margin-top: 10px; }
+.access-wallet-status { display: flex; align-items: center; gap: 8px; margin: 0 0 17px; padding: 10px 11px; border: 1px solid rgba(141, 214, 185, .16); border-radius: 8px; color: var(--mint); background: rgba(57, 115, 88, .08); font-size: 11px; }
+.access-wallet-status span { color: #cbd5d2; }
+.access-wallet-status code { margin-left: auto; color: #a9dec8; font-size: 11px; }
 .access-disclaimer { display: flex; gap: 9px; align-items: flex-start; margin-top: 22px; padding: 12px; border: 1px solid rgba(217, 187, 131, .15); border-radius: 8px; color: #c8b98f; background: rgba(75, 58, 28, .13); font-size: 11px; line-height: 1.5; }
 .access-disclaimer svg { flex: 0 0 auto; margin-top: 1px; }
 .form-error { display: flex; align-items: flex-start; gap: 8px; color: #edb1b6; font-size: 12px; line-height: 1.5; }

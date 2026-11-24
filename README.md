@@ -6,12 +6,13 @@ VAULTORA is a personal vault that encrypts files and private details in the brow
 
 | Area | What works |
 | --- | --- |
-| Local vault | Create and unlock a passphrase-protected vault. The app locks after 15 minutes without activity or when you lock it manually. |
+| Local vault | First use connects a wallet, then sets a vault passphrase and backup email when cloud access is configured. The passphrase decrypts files; email sign-in does not. The app locks after 15 minutes without activity or when you lock it manually. |
 | Documents | Encrypt, list, search, sort, star, rename, organize, download, and delete supported files. Files are limited to 25 MiB. |
 | Project spaces | Create, edit, and delete encrypted spaces, then search and filter their documents. |
 | Saved links | Create, search, edit, and delete encrypted HTTP or HTTPS links, descriptions, categories, and tags. |
 | Activity | Store encrypted local activity records. They describe app actions and are not a tamper-proof audit log. |
 | Recovery | The Recovery Shield reports the current state accurately. Guardian recovery is not implemented. Optional manual sync covers encrypted documents only and remains inactive until Supabase is configured and tested. |
+| Backup email | Email sign-in accesses encrypted cloud documents only. It cannot decrypt files or authorize Soroban actions. Supabase must be configured for email access and sync. |
 | Wallet and registry | Preserves Varial wallet connection, Soroban registration with wallet authorization, transaction status, and read-only verification. Calls are pinned to Stellar Testnet. |
 
 The app encrypts files and filenames in this browser before local storage or optional manual document sync. Saved URLs remain local. Registering a document publishes its SHA-256 fingerprint, an encrypted-metadata fingerprint, the wallet address, and a timestamp to the Testnet contract. Those registry values are public. The contract does not receive the file or filename.
