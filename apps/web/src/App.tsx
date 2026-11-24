@@ -30,7 +30,7 @@ import {
 import { sha256File } from "./lib/fileHash";
 import { defaultSorobanConfig, explorerTransactionUrl, STELLAR_TESTNET_PASSPHRASE, type DocumentOperation } from "./lib/sorobanConfig";
 import { initialTransactionState, transactionReducer } from "./lib/transactionState";
-import { connectWallet, disconnectWallet, walletErrorMessage, type ConnectedWallet } from "./lib/wallet";
+import { connectWallet, disconnectWallet, walletConnectConfigured, walletErrorMessage, type ConnectedWallet } from "./lib/wallet";
 import { cleanInterfaceMessage } from "./lib/uiText";
 import type { ContractOperationResult } from "./lib/soroban";
 import {
@@ -209,10 +209,11 @@ function AccessScreen({
     <Brand />
     <span className="access-kicker"><Icon name="wallet" size={15} /> FIRST USE · STEP 1 OF 3</span>
     <h1>Connect your wallet</h1>
-    <p>Connect a wallet to start VAULTORA. Next, set your vault passphrase and add a backup email. Email sign-in can access encrypted cloud copies, but only your passphrase can decrypt files. Soroban actions still require wallet authorization.</p>
+    <p>Connect a Stellar wallet to start VAULTORA. Choose from supported providers; availability and Soroban transaction signing vary by wallet. Next, set your vault passphrase and add a backup email. Email can access encrypted cloud copies, but only your passphrase can decrypt files. Soroban actions still require wallet approval.</p>
+    {!walletConnectConfigured && <small className="field-hint wallet-provider-note">WalletConnect mobile linking is not configured here yet. Other compatible wallet providers remain available.</small>}
     {error && <div role="alert" className="form-error"><Icon name="alert" size={16} />{error}</div>}
     {walletError && <div role="alert" className="form-error"><Icon name="alert" size={16} />{walletError}</div>}
-    <button className="button button-primary access-submit" type="button" onClick={onConnectWallet} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Connect Varial wallet"}</button>
+    <button className="button button-primary access-submit" type="button" onClick={onConnectWallet} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Choose a Stellar wallet"}</button>
   </section></main>;
   if (mode === "setup-backup") return <main className="access-shell"><section className="access-card">
     <Brand />
@@ -231,7 +232,7 @@ function AccessScreen({
         <span className="access-kicker"><Icon name={create ? "spark" : "lock"} size={15} /> {restore ? "ENCRYPTED CLOUD VAULT" : create ? "FIRST USE · STEP 2 OF 3" : "ENCRYPTED ON THIS DEVICE"}</span>
         <h1>{create ? "Set up your vault" : restore ? "Restore your cloud vault" : "Unlock your vault"}</h1>
         <p>{create ? "Choose a vault passphrase. It encrypts your files and private details before they are saved in this browser." : restore ? "Use the vault passphrase that protects your encrypted cloud documents. Email sign-in does not decrypt them." : "Enter the vault passphrase you chose on this device. It is not sent to a server."}</p>
-        {create && wallet && <div className="access-wallet-status"><Icon name="wallet" size={15} /><span>Wallet connected</span><code>{shortAddress(wallet.address)}</code></div>}
+        {create && wallet && <div className="access-wallet-status"><Icon name="wallet" size={15} /><span>Connected with {wallet.walletName ?? "Stellar wallet"}</span><code>{shortAddress(wallet.address)}</code></div>}
         <form onSubmit={(event) => { event.preventDefault(); onSubmit(passphrase, create ? confirmation : undefined); }}>
           <label className="field-label" htmlFor="vault-passphrase">Vault passphrase</label>
           <input id="vault-passphrase" type="password" autoComplete={create ? "new-password" : "current-password"} value={passphrase} onChange={(event) => setPassphrase(event.currentTarget.value)} minLength={12} required autoFocus />
@@ -930,7 +931,7 @@ function App() {
           <p className="panel-copy">Register this file's SHA-256 fingerprint after you review the public, permanent Testnet record. The file and its name stay off-chain.</p>
           {!contractConfigured && <div className="inline-notice"><Icon name="alert" size={16} /><span>Registry actions are disabled until a Testnet contract ID is configured.</span></div>}
           {walletError && <div className="form-error" role="alert">{walletError}</div>}
-          <div className="registry-actions">{!wallet ? <button className="button button-secondary full-button" onClick={() => void handleConnect()} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Connect Varial wallet"}</button> : <button className="button button-secondary full-button" onClick={() => void handleDisconnect()} disabled={walletBusy}><Icon name="wallet" size={16} />{shortAddress(wallet.address)} · Disconnect</button>}
+          <div className="registry-actions">{!wallet ? <button className="button button-secondary full-button" onClick={() => void handleConnect()} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Choose a Stellar wallet"}</button> : <button className="button button-secondary full-button" onClick={() => void handleDisconnect()} disabled={walletBusy}><Icon name="wallet" size={16} />{shortAddress(wallet.address)} · Disconnect</button>}
             <button className="button button-primary full-button" onClick={() => void handleRegistryOperation(doc, "register")} disabled={!contractConfigured || !wallet || documentBusy || !wallet.network || wallet.network.networkPassphrase !== STELLAR_TESTNET_PASSPHRASE}><Icon name="ledger" size={16} />{documentBusy && lastOperation === "register" ? "Registering…" : "Register fingerprint"}</button>
             <button className="button button-secondary full-button" onClick={() => void handleRegistryOperation(doc, "verify")} disabled={!contractConfigured || !wallet || documentBusy}><Icon name="shield" size={16} />{documentBusy && lastOperation === "verify" ? "Checking…" : "Verify integrity"}</button>
           </div>
@@ -1048,7 +1049,7 @@ function App() {
           <label className="header-workspace"><Icon name="spaces" size={16} /><select aria-label="Select project space" value={activeWorkspaceId} onChange={(event) => setActiveWorkspaceId(event.currentTarget.value)}><option value="">Personal Vault</option>{workspaces.map((space) => <option value={space.id} key={space.id}>{space.name}</option>)}</select><Icon name="chevron" size={14} /></label>
           <button className="header-search" onClick={() => { setCommandQuery(""); setCommandOpen(true); }}><Icon name="search" size={17} /><span>Search</span><kbd>⌘ K</kbd></button>
           <span className="header-testnet"><span className="network-dot" />TESTNET</span>
-          <button className={`header-wallet${wallet ? " connected" : ""}`} onClick={() => wallet ? void handleDisconnect() : void handleConnect()} disabled={walletBusy} title={wallet ? `Disconnect ${wallet.address}` : "Connect Varial wallet"}><Icon name="wallet" size={16} /><span>{wallet ? shortAddress(wallet.address) : walletBusy ? "Connecting" : "Connect wallet"}</span></button>
+          <button className={`header-wallet${wallet ? " connected" : ""}`} onClick={() => wallet ? void handleDisconnect() : void handleConnect()} disabled={walletBusy} title={wallet ? `Disconnect ${wallet.address}` : "Choose a Stellar wallet"}><Icon name="wallet" size={16} /><span>{wallet ? shortAddress(wallet.address) : walletBusy ? "Connecting" : "Connect wallet"}</span></button>
         </header>
         <main className="page-content">
           {walletError && <div className="global-alert error" role="alert"><Icon name="alert" size={17} /><span>{walletError}</span><button onClick={() => setWalletError("")} aria-label="Dismiss message"><Icon name="close" size={16} /></button></div>}
@@ -1163,7 +1164,7 @@ function SettingsPage({ storageEstimate, wallet, onLock, onDisconnect, cloudCont
   return <><PageIntro eyebrow="PREFERENCES" title="Settings" description="Your vault is encrypted in this browser. The passphrase is not stored." />
     <div className="settings-grid"><section className="panel settings-card"><span className="section-kicker">LOCAL VAULT</span><h2>Storage and encryption</h2><StatusRow icon="lock" title="Encryption" status="AES-256-GCM with passphrase-wrapped document keys" state="good" /><StatusRow icon="lock" title="Session lock" status="Manual or after 15 minutes without activity." state="good" /><StatusRow icon="network" title="Storage" status="Encrypted in this browser; cloud availability is shown below." state="neutral" /><div className="settings-data">Browser storage used<strong>{estimate ? formatBytes(estimate.usage) : "Checking…"}</strong></div>{estimate?.quota ? <small className="field-hint">Browser quota estimate: {formatBytes(estimate.quota)}. This varies by device and browser.</small> : null}<button className="button button-secondary" onClick={onLock}><Icon name="lock" size={16} />Lock vault</button></section>
     {cloudControls}
-    <section className="panel settings-card"><span className="section-kicker">STELLAR TESTNET</span><h2>Wallet connection</h2><StatusRow icon="wallet" title="Varial wallet" status={wallet ? shortAddress(wallet.address) : "Not connected"} state={wallet ? "good" : "neutral"} />{wallet && <button className="button button-secondary" onClick={onDisconnect}><Icon name="wallet" size={16} />Disconnect wallet</button>}<p className="panel-copy">Registration requires wallet approval. VAULTORA does not store wallet secret keys.</p></section></div>
+    <section className="panel settings-card"><span className="section-kicker">STELLAR TESTNET</span><h2>Wallet connection</h2><StatusRow icon="wallet" title={wallet?.walletName ?? "Stellar wallet"} status={wallet ? shortAddress(wallet.address) : "Not connected"} state={wallet ? "good" : "neutral"} />{wallet && <button className="button button-secondary" onClick={onDisconnect}><Icon name="wallet" size={16} />Disconnect wallet</button>}<p className="panel-copy">Registration requires wallet approval. VAULTORA does not store wallet secret keys.</p></section></div>
   </>;
 }
 

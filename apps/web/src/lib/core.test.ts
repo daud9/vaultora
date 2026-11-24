@@ -132,21 +132,25 @@ describe("Soroban contract arguments and verification", () => {
   });
 });
 
-describe("Varial wallet adapter errors", () => {
-  it("surfaces an extension/API rejection and does not invent a connected address", async () => {
+describe("wallet adapter errors", () => {
+  it("surfaces a provider/API rejection and does not invent a connected address", async () => {
     const api = {
-      requestAccess: vi.fn().mockRejectedValue(new Error("Varial extension not found")),
+      requestAccess: vi.fn().mockRejectedValue(new Error("Wallet extension not found")),
       getNetworkDetails: vi.fn(),
+      getWalletName: vi.fn(() => "Test wallet"),
+      disconnect: vi.fn(),
     };
-    await expect(connectWallet(api)).rejects.toThrow("Varial extension not found");
+    await expect(connectWallet(api)).rejects.toThrow("Wallet extension not found");
     expect(api.getNetworkDetails).not.toHaveBeenCalled();
-    expect(walletErrorMessage(new Error("Varial extension not found"))).toMatch(/extension is installed/i);
+    expect(walletErrorMessage(new Error("Wallet extension not found"))).toMatch(/available and unlocked/i);
   });
 
   it("rejects explicit wallet API errors", async () => {
     const api = {
       requestAccess: vi.fn().mockResolvedValue({ address: "", error: { message: "User rejected access" } }),
       getNetworkDetails: vi.fn(),
+      getWalletName: vi.fn(() => "Test wallet"),
+      disconnect: vi.fn(),
     };
     await expect(connectWallet(api)).rejects.toThrow("User rejected access");
   });

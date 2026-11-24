@@ -64,7 +64,7 @@ async function createEmptyVault() {
   const user = userEvent.setup();
   render(<App />);
   await screen.findByRole("heading", { name: "Connect your wallet" });
-  await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+  await user.click(screen.getByRole("button", { name: "Choose a Stellar wallet" }));
   await screen.findByRole("heading", { name: "Set up your vault" });
   await user.type(screen.getByLabelText("Vault passphrase"), "correct horse battery staple");
   await user.type(screen.getByLabelText("Confirm passphrase"), "correct horse battery staple");
@@ -98,9 +98,9 @@ describe("VAULTORA Phase 1 app", () => {
     expect(screen.queryByLabelText("Vault passphrase")).toBeNull();
     expect(localVault.createVaultSession).not.toHaveBeenCalled();
 
-    await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+    await user.click(screen.getByRole("button", { name: "Choose a Stellar wallet" }));
     expect(await screen.findByRole("heading", { name: "Set up your vault" })).toBeTruthy();
-    expect(screen.getByText(/Wallet connected/)).toBeTruthy();
+    expect(screen.getByText(/Connected with Stellar wallet/)).toBeTruthy();
     expect(wallet.connectWallet).toHaveBeenCalledOnce();
   });
 
@@ -115,7 +115,7 @@ describe("VAULTORA Phase 1 app", () => {
     render(<App />);
 
     await screen.findByRole("heading", { name: "Connect your wallet" });
-    await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+    await user.click(screen.getByRole("button", { name: "Choose a Stellar wallet" }));
     await screen.findByRole("heading", { name: "Set up your vault" });
     await user.type(screen.getByLabelText("Vault passphrase"), "correct horse battery staple");
     await user.type(screen.getByLabelText("Confirm passphrase"), "correct horse battery staple");
@@ -138,7 +138,7 @@ describe("VAULTORA Phase 1 app", () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("heading", { name: "Unlock your vault" });
-    expect(screen.queryByRole("button", { name: "Connect Varial wallet" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Choose a Stellar wallet" })).toBeNull();
 
     await user.type(screen.getByLabelText("Vault passphrase"), "correct horse battery staple");
     await user.click(screen.getByRole("button", { name: "Unlock vault" }));
@@ -233,7 +233,7 @@ describe("VAULTORA Phase 1 app", () => {
     const user = userEvent.setup();
     render(<App />);
     await screen.findByRole("heading", { name: "Connect your wallet" });
-    await user.click(screen.getByRole("button", { name: "Connect Varial wallet" }));
+    await user.click(screen.getByRole("button", { name: "Choose a Stellar wallet" }));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain("Wallet request; rejected");
     expect(alert.textContent).not.toContain(emDash);

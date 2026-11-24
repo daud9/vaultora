@@ -54,6 +54,7 @@ input, select { min-height: 42px; padding: 0 12px; }
 textarea { min-height: 84px; padding: 10px 12px; resize: vertical; }
 input::placeholder, textarea::placeholder { color: #65717b; }
 .field-hint { color: var(--muted); font-size: 11px; line-height: 1.55; }
+.wallet-provider-note { display: block; margin: -12px 0 14px; }
 .access-submit { width: 100%; margin-top: 10px; }
 .access-wallet-status { display: flex; align-items: center; gap: 8px; margin: 0 0 17px; padding: 10px 11px; border: 1px solid rgba(141, 214, 185, .16); border-radius: 8px; color: var(--mint); background: rgba(57, 115, 88, .08); font-size: 11px; }
 .access-wallet-status span { color: #cbd5d2; }

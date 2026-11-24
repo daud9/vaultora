@@ -8,7 +8,7 @@ import {
   scValToNative,
   xdr,
 } from "@stellar/stellar-sdk";
-import { signTransaction } from "@stellar/varial-sdk";
+import { StellarWalletsKit } from "@creit-tech/stellar-wallets-kit/sdk";
 import { STELLAR_TESTNET_PASSPHRASE, STELLAR_TESTNET_RPC_URL, type DocumentOperation, type SorobanConfig } from "./sorobanConfig";
 export type { DocumentOperation, SorobanConfig } from "./sorobanConfig";
 
@@ -112,14 +112,10 @@ export async function invokeDocumentContract(args: {
 
   const preparedTransaction = await server.prepareTransaction(transaction);
   onStage?.("awaiting_authorization");
-  const signed = await signTransaction(preparedTransaction.toXDR(), {
+  const signed = await StellarWalletsKit.signTransaction(preparedTransaction.toXDR(), {
     networkPassphrase: config.networkPassphrase,
     address: sourceAddress,
   });
-  if (signed.error) {
-    const error = typeof signed.error === "string" ? signed.error : signed.error.message;
-    throw new Error(error || "Wallet authorization failed.");
-  }
   if (!signed.signedTxXdr) throw new Error("The wallet did not return a signed transaction.");
 
   const signedTransaction = TransactionBuilder.fromXDR(signed.signedTxXdr, config.networkPassphrase);

@@ -9,6 +9,7 @@ interface ImportMetaEnv {
   readonly VITE_STELLAR_CONTRACT_ID?: string;
   readonly VITE_STELLAR_REGISTER_METHOD?: string;
   readonly VITE_STELLAR_VERIFY_METHOD?: string;
+  readonly VITE_WALLETCONNECT_PROJECT_ID?: string;
 }
 
 interface ImportMeta {
