@@ -129,6 +129,36 @@ kbd { padding: 2px 5px; border: 1px solid rgba(204, 216, 221, .15); border-radiu
 .header-wallet { display: inline-flex; align-items: center; gap: 7px; min-height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 7px; color: #cbd3d6; background: var(--surface); font-size: 10px; white-space: nowrap; }
 .header-wallet:hover { border-color: rgba(141, 214, 185, .28); }
 .header-wallet.connected { color: #a9dec8; }
+.wallet-menu-wrap { position: relative; }
+.wallet-menu-scrim { position: fixed; z-index: 28; inset: 0; border: 0; background: transparent; cursor: default; }
+.wallet-menu { position: absolute; z-index: 29; top: calc(100% + 8px); right: 0; display: grid; gap: 6px; width: min(320px, calc(100vw - 32px)); padding: 12px; border: 1px solid var(--line-strong); border-radius: 12px; background: #11171d; box-shadow: 0 24px 70px rgba(0, 0, 0, .5); }
+.wallet-menu-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 2px 4px 6px; }
+.wallet-menu-provider { color: #d7e8e0; font-size: 11px; font-weight: 650; }
+.wallet-menu-badge { display: inline-flex; align-items: center; gap: 5px; padding: 4px 7px; border: 1px solid rgba(141, 214, 185, .13); border-radius: 6px; color: #a6d5c1; background: rgba(54, 101, 78, .12); font-size: 8px; font-weight: 760; letter-spacing: .8px; }
+.wallet-menu-address { display: block; overflow-wrap: anywhere; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; color: #c6d0d3; background: #0c1116; font-size: 10px; }
+.wallet-menu-balance { padding: 2px 4px 4px; color: var(--soft); font-size: 11px; }
+.wallet-menu-item { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; color: #d1d9dc; background: transparent; text-align: left; font-size: 11px; }
+.wallet-menu-item:hover { border-color: var(--line); background: rgba(255, 255, 255, .035); }
+.wallet-menu-item > span { display: grid; gap: 2px; min-width: 0; }
+.wallet-menu-item small { color: var(--muted); font-size: 10px; line-height: 1.4; }
+.wallet-menu-item svg { flex: 0 0 auto; color: var(--mint); }
+.wallet-menu-primary { border-color: rgba(141, 214, 185, .25); background: rgba(55, 111, 84, .13); }
+.wallet-menu-danger svg { color: var(--danger); }
+.wallet-menu-note { margin: 2px 4px 0; color: var(--soft); font-size: 10px; line-height: 1.5; overflow-wrap: anywhere; }
+.registry-wallet { display: grid; gap: 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; color: #d1d9dc; background: rgba(255, 255, 255, .018); font-size: 11px; }
+.registry-wallet > span { display: flex; align-items: center; gap: 8px; }
+.registry-wallet svg { color: var(--mint); }
+.registry-wallet small { color: var(--muted); font-size: 10px; }
+.onboarding-dialog h2 { font-size: 24px; }
+.onboarding-actions { display: grid; gap: 8px; margin-top: 12px; }
+.onboarding-secondary { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; }
+.onboarding-progress { display: grid; gap: 12px; justify-items: start; padding: 12px 0 4px; color: var(--soft); font-size: 12px; line-height: 1.6; }
+.onboarding-success { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border: 1px solid rgba(141, 214, 185, .2); border-radius: 10px; background: rgba(55, 111, 84, .12); }
+.onboarding-success > div { display: grid; gap: 5px; min-width: 0; }
+.onboarding-success code { overflow-wrap: anywhere; color: #c6d0d3; font-size: 10px; }
+.onboarding-success small { color: var(--soft); font-size: 11px; }
+.onboarding-check { display: grid; flex: 0 0 auto; place-items: center; width: 30px; height: 30px; border-radius: 50%; color: #08120d; background: var(--mint); }
+.onboarding-candidate { justify-content: flex-start; }
 .mobile-menu { display: none; place-items: center; width: 35px; height: 35px; border: 1px solid var(--line); border-radius: 8px; color: #bbc5c8; background: var(--surface); }
 .mobile-wordmark { display: none; align-items: center; gap: 7px; min-width: 0; color: #eff3f2; font-size: 10px; font-weight: 760; letter-spacing: .65px; }
 .mobile-wordmark .brand-mark { width: 28px; height: 28px; border-radius: 8px; }
