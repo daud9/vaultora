@@ -31,6 +31,33 @@ import { sha256File } from "./lib/fileHash";
 import { defaultSorobanConfig, explorerTransactionUrl, STELLAR_TESTNET_PASSPHRASE, type DocumentOperation } from "./lib/sorobanConfig";
 import { initialTransactionState, transactionReducer } from "./lib/transactionState";
 import { connectWallet, disconnectWallet, walletErrorMessage, type ConnectedWallet } from "./lib/wallet";
+import {
+  PasskeyAmbiguousError,
+  addBackupPasskey,
+  connectPasskeyWallet,
+  connectPasskeyWalletToContract,
+  createPasskeyWallet,
+  disconnectPasskeyWallet,
+  explorerAccountUrl,
+  fundPasskeyWallet,
+  getNativeBalance,
+  getPasskeyKit,
+  getPasskeyRegistryDeps,
+  passkeyErrorMessage,
+  restorePasskeySession,
+} from "./lib/passkeyWallet";
+import {
+  RECOVERY_WARNING,
+  buildRecoveryEmailBody,
+  getRecoveryRecord,
+  hasCompletedRecovery,
+  openRecoveryMailto,
+  recordBackupPasskey,
+  recordRecoveryEmail,
+  validateRecoveryEmail,
+  type RecoveryMethod,
+  type RecoveryRecord,
+} from "./lib/passkeyRecovery";
 import { cleanInterfaceMessage } from "./lib/uiText";
 import type { ContractOperationResult } from "./lib/soroban";
 import {
@@ -247,6 +274,28 @@ function App() {
   const [wallet, setWallet] = useState<ConnectedWallet | null>(null);
   const [walletBusy, setWalletBusy] = useState(false);
   const [walletError, setWalletError] = useState("");
+  const [walletMenuOpen, setWalletMenuOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(false);
+  const [onboardingStage, setOnboardingStage] = useState<"intro" | "creating" | "connecting" | "success" | "select" | "recovery">("intro");
+  const [displayName, setDisplayName] = useState("");
+  const [passkeyCandidates, setPasskeyCandidates] = useState<string[]>([]);
+  // Mandatory email recovery backup for passkey wallets. The stage ref
+  // exists because the Escape handler is registered once and would
+  // otherwise close over the stale stage from the first render.
+  const [recoveryEmail, setRecoveryEmail] = useState("");
+  const [recoveryError, setRecoveryError] = useState("");
+  const [recoveryAction, setRecoveryAction] = useState<RecoveryMethod | null>(null);
+  const [recoveryActionMessage, setRecoveryActionMessage] = useState("");
+  const [recoveryRecord, setRecoveryRecord] = useState<RecoveryRecord | null>(null);
+  const [backupBusy, setBackupBusy] = useState(false);
+  const [backupMessage, setBackupMessage] = useState("");
+  const onboardingStageRef = useRef(onboardingStage);
+  onboardingStageRef.current = onboardingStage;
+  const [faucetBusy, setFaucetBusy] = useState(false);
+  const [faucetMessage, setFaucetMessage] = useState("");
+  const [balanceBusy, setBalanceBusy] = useState(false);
+  const [copiedAddress, setCopiedAddress] = useState(false);
+  const passkeyRestoredRef = useRef(false);
   const [notice, setNotice] = useState("");
   const [operationError, setOperationError] = useState("");
   const [collapsed, setCollapsed] = useState(false);
@@ -375,13 +424,61 @@ function App() {
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") { event.preventDefault(); setCommandOpen(true); setCommandQuery(""); }
-      if (event.key === "Escape") { setCommandOpen(false); setDrawerOpen(false); setModal(null); }
+      if (event.key === "Escape") {
+        setCommandOpen(false); setDrawerOpen(false); setModal(null); setWalletMenuOpen(false);
+        // The mandatory recovery step cannot be escaped: the wallet
+        // must be backed up before the user continues. The ref is
+        // needed because this handler is registered once.
+        if (!walletBusy && onboardingStageRef.current !== "recovery") setOnboardingOpen(false);
+      }
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
   }, []);
 
   useEffect(() => { if (commandOpen) window.setTimeout(() => commandInputRef.current?.focus(), 20); }, [commandOpen]);
+
+  // Silent passkey session restore once the vault is unlocked. A stored
+  // session never creates a wallet; it only reconnects an existing one.
+  // A restored passkey wallet with no completed email recovery backup
+  // is sent straight to the mandatory recovery step.
+  useEffect(() => {
+    if (!session || passkeyRestoredRef.current) return;
+    passkeyRestoredRef.current = true;
+    void restorePasskeySession().then((restored) => {
+      if (!restored || sessionRef.current !== session) return;
+      setWallet(restored);
+      void refreshPasskeyBalance(restored);
+      if (!hasCompletedRecovery(restored.address)) {
+        startRecoveryStep(restored);
+        setOnboardingOpen(true);
+      } else {
+        setRecoveryRecord(getRecoveryRecord(restored.address));
+      }
+    }).catch(() => undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session]);
+
+  /** Reset the recovery form for a wallet and load any stored record. */
+  function startRecoveryStep(connected: ConnectedWallet) {
+    const record = getRecoveryRecord(connected.address);
+    setRecoveryRecord(record);
+    setRecoveryEmail(record?.email ?? "");
+    setRecoveryError("");
+    setRecoveryAction(null);
+    setRecoveryActionMessage("");
+    setBackupMessage("");
+    setOnboardingStage("recovery");
+  }
+
+  async function refreshPasskeyBalance(nextWallet: ConnectedWallet) {
+    if (nextWallet.kind !== "passkey") return;
+    setBalanceBusy(true);
+    try {
+      const balance = await getNativeBalance(nextWallet.address);
+      setWallet((current) => current?.address === nextWallet.address ? { ...current, balance } : current);
+    } finally { setBalanceBusy(false); }
+  }
   useEffect(() => {
     const selected = documents.find((doc) => doc.id === selectedDocumentId);
     if (selected) setDetailRename(selected.metadata.fileName);
@@ -508,16 +605,178 @@ function App() {
 
   async function handleConnect() {
     setWalletBusy(true); setWalletError("");
-    try { setWallet(await connectWallet()); }
+    try { setWallet(await connectWallet()); setWalletMenuOpen(false); }
     catch (error) { setWalletError(walletErrorMessage(error)); }
     finally { setWalletBusy(false); }
   }
 
+  async function handleCreatePasskey() {
+    setWalletBusy(true); setWalletError(""); setOnboardingStage("creating"); setFaucetMessage("");
+    try {
+      const { wallet: created } = await createPasskeyWallet(displayName);
+      setWallet(created);
+      setWalletMenuOpen(false);
+      setNotice(`Passkey wallet created on Stellar Testnet: ${created.address}`);
+      void refreshPasskeyBalance(created);
+      // Mandatory next step: email recovery backup before "success".
+      startRecoveryStep(created);
+    } catch (error) {
+      setWalletError(passkeyErrorMessage(error));
+      setOnboardingStage("intro");
+    } finally { setWalletBusy(false); }
+  }
+
+  /** After a passkey connect, recovery is mandatory when not yet done. */
+  function finishPasskeyConnect(connected: ConnectedWallet) {
+    setWallet(connected);
+    setWalletMenuOpen(false);
+    setNotice(`Passkey wallet connected: ${connected.address}`);
+    void refreshPasskeyBalance(connected);
+    if (hasCompletedRecovery(connected.address)) {
+      setRecoveryRecord(getRecoveryRecord(connected.address));
+      setOnboardingStage("success");
+      setOnboardingOpen(false);
+    } else {
+      startRecoveryStep(connected);
+      setOnboardingOpen(true);
+    }
+  }
+
+  async function handleConnectPasskey() {
+    setWalletBusy(true); setWalletError(""); setOnboardingStage("connecting"); setPasskeyCandidates([]);
+    try {
+      const connected = await connectPasskeyWallet();
+      finishPasskeyConnect(connected);
+    } catch (error) {
+      if (error instanceof PasskeyAmbiguousError && error.candidates.length) {
+        setPasskeyCandidates(error.candidates);
+        setOnboardingStage("select");
+        setOnboardingOpen(true);
+      } else {
+        setWalletError(passkeyErrorMessage(error));
+        setOnboardingStage("intro");
+      }
+    } finally { setWalletBusy(false); }
+  }
+
+  async function handleConnectPasskeyCandidate(contractId: string) {
+    setWalletBusy(true); setWalletError(""); setOnboardingStage("connecting");
+    try {
+      const connected = await connectPasskeyWalletToContract(contractId);
+      finishPasskeyConnect(connected);
+    } catch (error) {
+      setWalletError(passkeyErrorMessage(error));
+      setOnboardingStage("select");
+    } finally { setWalletBusy(false); }
+  }
+
+  /**
+   * Mandatory recovery step. "Email my recovery details" opens the
+   * user's own mail app (VAULTORA sends nothing itself); "Copy recovery
+   * details" copies the same text. Either action arms the confirmation
+   * control, which is what actually records the backup.
+   */
+  function handleRecoveryAction(method: RecoveryMethod) {
+    if (!wallet || wallet.kind !== "passkey") return;
+    const validation = validateRecoveryEmail(recoveryEmail);
+    if (validation) { setRecoveryError(validation); return; }
+    setRecoveryError("");
+    if (method === "mailto") {
+      openRecoveryMailto(recoveryEmail, wallet.address);
+      setRecoveryAction("mailto");
+      setRecoveryActionMessage("Your mail app should have opened with the recovery details pre-filled. Send the email to yourself, then confirm below.");
+    } else {
+      const text = buildRecoveryEmailBody({ contractId: wallet.address, email: recoveryEmail });
+      if (!navigator.clipboard?.writeText) {
+        setRecoveryError("Copying is not available in this browser. Use the email option instead.");
+        return;
+      }
+      void navigator.clipboard.writeText(text).then(() => {
+        setRecoveryAction("copy");
+        setRecoveryActionMessage("Recovery details copied. Paste them somewhere safe, then confirm below.");
+      }).catch(() => {
+        setRecoveryError("The recovery details could not be copied. Select the text manually or use the email option instead.");
+      });
+    }
+  }
+
+  /** Records the backup once the user confirms they sent/saved it. */
+  function handleRecoveryConfirm() {
+    if (!wallet || wallet.kind !== "passkey" || !recoveryAction) return;
+    const validation = validateRecoveryEmail(recoveryEmail);
+    if (validation) { setRecoveryError(validation); return; }
+    try {
+      const record = recordRecoveryEmail(wallet.address, recoveryEmail, recoveryAction);
+      setRecoveryRecord(record);
+      setRecoveryActionMessage("Recovery email recorded. Add a backup passkey below, or continue to VAULTORA.");
+    } catch (error) {
+      setRecoveryError(error instanceof Error ? error.message : "The recovery email could not be recorded.");
+    }
+  }
+
+  /** Enroll a second passkey on the smart account (the real backup). */
+  async function handleAddBackupPasskey() {
+    if (!wallet || wallet.kind !== "passkey" || backupBusy) return;
+    const email = recoveryRecord?.email ?? recoveryEmail;
+    setBackupBusy(true); setRecoveryError(""); setBackupMessage("");
+    try {
+      const { credentialId, hash } = await addBackupPasskey(email);
+      const record = recordBackupPasskey(wallet.address, credentialId);
+      if (record) setRecoveryRecord(record);
+      setBackupMessage(
+        `Backup passkey added. It can connect this wallet on its own.${hash ? ` Transaction: ${hash}` : ""}`,
+      );
+    } catch (error) {
+      setRecoveryError(passkeyErrorMessage(error));
+    } finally { setBackupBusy(false); }
+  }
+
+  /** Continue is only possible once recovery has been recorded. */
+  function handleRecoveryContinue() {
+    if (!wallet || !recoveryRecord) return;
+    setOnboardingStage("success");
+  }
+
   async function handleDisconnect() {
-    setWalletBusy(true); setWalletError("");
-    try { await disconnectWallet(); setWallet(null); }
-    catch (error) { setWalletError(walletErrorMessage(error)); }
-    finally { setWalletBusy(false); }
+    if (!wallet) return;
+    const activeWallet = wallet;
+    setWalletBusy(true); setWalletError(""); setWalletMenuOpen(false); setFaucetMessage("");
+    try {
+      if (activeWallet.kind === "passkey") await disconnectPasskeyWallet();
+      else await disconnectWallet();
+      setWallet(null);
+      setRecoveryRecord(null);
+    } catch (error) {
+      setWalletError(activeWallet.kind === "passkey" ? passkeyErrorMessage(error) : walletErrorMessage(error));
+    } finally { setWalletBusy(false); }
+  }
+
+  async function handleFaucet() {
+    if (!wallet || wallet.kind !== "passkey" || faucetBusy) return;
+    setFaucetBusy(true); setWalletError(""); setFaucetMessage("");
+    try {
+      const result = await fundPasskeyWallet();
+      const balance = await getNativeBalance(wallet.address);
+      setWallet((current) => current?.address === wallet.address ? { ...current, balance } : current);
+      setFaucetMessage(
+        `Testnet XLM requested${result.amount ? ` (${result.amount} XLM)` : ""}. ` +
+        `Balance now: ${balance ?? "unavailable"}. Testnet XLM has no real monetary value.` +
+        (result.hash ? ` Transaction: ${result.hash}` : ""),
+      );
+    } catch (error) {
+      setWalletError(passkeyErrorMessage(error));
+    } finally { setFaucetBusy(false); }
+  }
+
+  async function handleCopyAddress() {
+    if (!wallet) return;
+    try {
+      await navigator.clipboard.writeText(wallet.address);
+      setCopiedAddress(true);
+      window.setTimeout(() => setCopiedAddress(false), 2000);
+    } catch {
+      setWalletError("The address could not be copied. Select it manually instead.");
+    }
   }
 
   async function handleUpload(file?: File) {
@@ -621,6 +880,8 @@ function App() {
         result = await invokeDocumentContract({
           operation, digest, metadataDigest,
           sourceAddress: activeWallet.address, config: defaultSorobanConfig,
+          walletKind: activeWallet.kind,
+          passkey: activeWallet.kind === "passkey" ? getPasskeyRegistryDeps(getPasskeyKit()) : undefined,
           onStage: (stage, hash) => {
             if (sessionRef.current !== activeSession) return;
             if (stage === "preparing") dispatchTransaction({ type: "START" });
@@ -848,7 +1109,7 @@ function App() {
     <>
       <section className="welcome-panel">
         <div><span className="eyebrow"><span /> PERSONAL VAULT</span><h1>Your documents, <em>in your hands.</em></h1><p>Encrypt files on this device, organize them into project spaces, and check their fingerprints on Stellar Testnet.</p></div>
-        <div className="welcome-actions"><button className="button button-primary" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={17} />Encrypt a document</button><button className="button button-secondary" onClick={() => setCommandOpen(true)}><Icon name="spark" size={16} />Quick actions <kbd>⌘ K</kbd></button></div>
+        <div className="welcome-actions"><button className="button button-primary" onClick={() => fileInputRef.current?.click()}><Icon name="upload" size={17} />Encrypt a document</button>{!wallet && <button className="button button-secondary" onClick={() => { setOnboardingStage("intro"); setOnboardingOpen(true); }}><Icon name="wallet" size={16} />Create wallet with passkey</button>}<button className="button button-secondary" onClick={() => setCommandOpen(true)}><Icon name="spark" size={16} />Quick actions <kbd>⌘ K</kbd></button></div>
       </section>
       <div className="summary-grid" aria-label="Vault summary">
         <Summary label="Documents" value={documents.length} icon="documents" caption="Encrypted on this device" />
@@ -861,7 +1122,7 @@ function App() {
           {renderDocumentList(sortedDocuments.slice(0, 5))}
         </section>
         <section className="panel security-panel"><div className="panel-heading"><div><span className="section-kicker">SECURITY STATUS</span><h2>Vault status</h2></div><Icon name="shield" className="panel-heading-icon" /></div>
-          <StatusRow icon="wallet" title="Stellar wallet" status={wallet ? `Connected · ${shortAddress(wallet.address)}` : "Not connected"} state={wallet ? "good" : "neutral"} />
+          <StatusRow icon="wallet" title="Stellar wallet" status={wallet ? `${wallet.provider} · ${shortAddress(wallet.address)}` : "Not connected"} state={wallet ? "good" : "neutral"} />
           <StatusRow icon="lock" title="Encryption" status="AES-256-GCM · unlocked" state="good" />
           <StatusRow icon="shield" title="Recovery Shield" status="Not set up" state="warning" />
           <StatusRow icon="network" title="Stellar registry" status={contractConfigured ? "Testnet contract ID set · reachability unverified" : "Contract ID not configured"} state={contractConfigured ? "neutral" : "warning"} />
@@ -899,7 +1160,7 @@ function App() {
           <p className="panel-copy">Register this file's SHA-256 fingerprint after you review the public, permanent Testnet record. The file and its name stay off-chain.</p>
           {!contractConfigured && <div className="inline-notice"><Icon name="alert" size={16} /><span>Registry actions are disabled until a Testnet contract ID is configured.</span></div>}
           {walletError && <div className="form-error" role="alert">{walletError}</div>}
-          <div className="registry-actions">{!wallet ? <button className="button button-secondary full-button" onClick={() => void handleConnect()} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Connect Varial wallet"}</button> : <button className="button button-secondary full-button" onClick={() => void handleDisconnect()} disabled={walletBusy}><Icon name="wallet" size={16} />{shortAddress(wallet.address)} · Disconnect</button>}
+          <div className="registry-actions">{!wallet ? <button className="button button-secondary full-button" onClick={() => { setOnboardingStage("intro"); setOnboardingOpen(true); }} disabled={walletBusy}><Icon name="wallet" size={16} />{walletBusy ? "Connecting…" : "Connect wallet"}</button> : <div className="registry-wallet"><span><Icon name="wallet" size={16} />{wallet.provider} · {shortAddress(wallet.address)}</span>{wallet.kind === "passkey" && <small>{balanceBusy ? "Checking balance…" : wallet.balance ? `Balance: ${wallet.balance} XLM` : "Balance unavailable"}</small>}</div>}
             <button className="button button-primary full-button" onClick={() => void handleRegistryOperation(doc, "register")} disabled={!contractConfigured || !wallet || documentBusy || !wallet.network || wallet.network.networkPassphrase !== STELLAR_TESTNET_PASSPHRASE}><Icon name="ledger" size={16} />{documentBusy && lastOperation === "register" ? "Registering…" : "Register fingerprint"}</button>
             <button className="button button-secondary full-button" onClick={() => void handleRegistryOperation(doc, "verify")} disabled={!contractConfigured || !wallet || documentBusy}><Icon name="shield" size={16} />{documentBusy && lastOperation === "verify" ? "Checking…" : "Verify integrity"}</button>
           </div>
@@ -992,7 +1253,7 @@ function App() {
       case "security-activity": return renderActivity();
       case "shared-with-me": return <UnavailablePage icon="share" title="Sharing is not enabled" text="This Phase 1 vault has no document-sharing service. Your files remain private on this device." />;
       case "notes": return <UnavailablePage icon="note" title="Notes are not enabled" text="This Phase 1 build stores encrypted documents, project spaces, and saved links. Notes are not available yet." />;
-      case "settings": return <SettingsPage storageEstimate={storageEstimate} wallet={wallet} onLock={lockVault} onDisconnect={() => void handleDisconnect()} cloudControls={renderCloudControls("settings")} />;
+      case "settings": return <SettingsPage storageEstimate={storageEstimate} wallet={wallet} recoveryRecord={recoveryRecord} onLock={lockVault} onDisconnect={() => void handleDisconnect()} onRequestFaucet={() => void handleFaucet()} faucetBusy={faucetBusy} faucetMessage={faucetMessage} cloudControls={renderCloudControls("settings")} />;
       default: return renderOverview();
     }
   };
@@ -1017,7 +1278,29 @@ function App() {
           <label className="header-workspace"><Icon name="spaces" size={16} /><select aria-label="Select project space" value={activeWorkspaceId} onChange={(event) => setActiveWorkspaceId(event.currentTarget.value)}><option value="">Personal Vault</option>{workspaces.map((space) => <option value={space.id} key={space.id}>{space.name}</option>)}</select><Icon name="chevron" size={14} /></label>
           <button className="header-search" onClick={() => { setCommandQuery(""); setCommandOpen(true); }}><Icon name="search" size={17} /><span>Search</span><kbd>⌘ K</kbd></button>
           <span className="header-testnet"><span className="network-dot" />TESTNET</span>
-          <button className={`header-wallet${wallet ? " connected" : ""}`} onClick={() => wallet ? void handleDisconnect() : void handleConnect()} disabled={walletBusy} title={wallet ? `Disconnect ${wallet.address}` : "Connect Varial wallet"}><Icon name="wallet" size={16} /><span>{wallet ? shortAddress(wallet.address) : walletBusy ? "Connecting" : "Connect wallet"}</span></button>
+          <div className="wallet-menu-wrap">
+            <button className={`header-wallet${wallet ? " connected" : ""}`} onClick={() => setWalletMenuOpen((open) => !open)} disabled={walletBusy} aria-expanded={walletMenuOpen} aria-haspopup="menu" title={wallet ? `${wallet.provider}: ${wallet.address}` : "Connect a wallet"}><Icon name="wallet" size={16} /><span>{wallet ? shortAddress(wallet.address) : walletBusy ? "Connecting" : "Connect wallet"}</span></button>
+            {walletMenuOpen && <>
+              <button className="wallet-menu-scrim" aria-label="Close wallet menu" onClick={() => setWalletMenuOpen(false)} />
+              <div className="wallet-menu" role="menu" aria-label="Wallet">
+                {!wallet ? <>
+                  <button role="menuitem" className="wallet-menu-item wallet-menu-primary" onClick={() => { setWalletMenuOpen(false); setOnboardingStage("intro"); setOnboardingOpen(true); }}><Icon name="spark" size={16} /><span><strong>Create wallet with passkey</strong><small>Stellar smart account · no extension, no seed phrase</small></span></button>
+                  <button role="menuitem" className="wallet-menu-item" onClick={() => void handleConnectPasskey()} disabled={walletBusy}><Icon name="wallet" size={16} /><span><strong>Connect with passkey</strong><small>Reconnect an existing smart account</small></span></button>
+                  <button role="menuitem" className="wallet-menu-item" onClick={() => void handleConnect()} disabled={walletBusy}><Icon name="wallet" size={16} /><span><strong>Connect existing Stellar wallet</strong><small>Varial browser wallet</small></span></button>
+                </> : <>
+                  <div className="wallet-menu-head"><span className="wallet-menu-provider">{wallet.provider}</span><span className="wallet-menu-badge"><span className="network-dot" />TESTNET</span></div>
+                  <code className="wallet-menu-address">{wallet.address}</code>
+                  <div className="wallet-menu-balance">{wallet.kind === "passkey" ? balanceBusy ? "Checking balance…" : wallet.balance ? `${wallet.balance} XLM` : "Balance unavailable" : "Balance shown in your wallet"}</div>
+                  {wallet.kind === "passkey" && <div className="wallet-menu-balance">{recoveryRecord ? `Recovery email: ${recoveryRecord.email}${recoveryRecord.backupPasskeyAdded ? " · Backup passkey added" : " · No backup passkey yet"}` : "No recovery email recorded yet"}</div>}
+                  <button role="menuitem" className="wallet-menu-item" onClick={() => void handleCopyAddress()}><Icon name="file" size={16} /><span><strong>{copiedAddress ? "Address copied" : "Copy address"}</strong></span></button>
+                  <a role="menuitem" className="wallet-menu-item" href={explorerAccountUrl(wallet.address)} target="_blank" rel="noreferrer"><Icon name="external" size={16} /><span><strong>View on Stellar Explorer</strong></span></a>
+                  {wallet.kind === "passkey" && <button role="menuitem" className="wallet-menu-item" onClick={() => void handleFaucet()} disabled={faucetBusy}><Icon name="plus" size={16} /><span><strong>{faucetBusy ? "Requesting…" : "Request Testnet XLM"}</strong><small>Get free Testnet XLM to test your account</small></span></button>}
+                  <button role="menuitem" className="wallet-menu-item wallet-menu-danger" onClick={() => void handleDisconnect()} disabled={walletBusy}><Icon name="close" size={16} /><span><strong>Disconnect</strong></span></button>
+                </>}
+                {faucetMessage && <p className="wallet-menu-note" role="status">{faucetMessage}</p>}
+              </div>
+            </>}
+          </div>
         </header>
         <main className="page-content">
           {walletError && <div className="global-alert error" role="alert"><Icon name="alert" size={17} /><span>{walletError}</span><button onClick={() => setWalletError("")} aria-label="Dismiss message"><Icon name="close" size={16} /></button></div>}
@@ -1035,6 +1318,59 @@ function App() {
 
       {modal && <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setModal(null); }}><section className="form-dialog" role="dialog" aria-modal="true" aria-labelledby="form-title"><div className="dialog-heading"><div><span className="section-kicker">ENCRYPTED VAULT</span><h2 id="form-title">{modal === "workspace" ? editingWorkspace ? "Edit project space" : "Create project space" : editingLink ? "Edit saved link" : "Save a link"}</h2></div><button className="icon-button" onClick={() => setModal(null)} aria-label="Close dialog"><Icon name="close" size={18} /></button></div>
         {modal === "workspace" ? <form onSubmit={(event) => void submitWorkspace(event)}><label className="field-label" htmlFor="space-name">Name</label><input id="space-name" value={workspaceName} onChange={(event) => setWorkspaceName(event.currentTarget.value)} maxLength={80} required autoFocus /><label className="field-label" htmlFor="space-description">Description</label><textarea id="space-description" value={workspaceDescription} onChange={(event) => setWorkspaceDescription(event.currentTarget.value)} maxLength={240} rows={3} /><label className="field-label" htmlFor="space-icon">Identifier</label><select id="space-icon" value={workspaceIcon} onChange={(event) => setWorkspaceIcon(event.currentTarget.value)}><option value="folder">Folder</option><option value="work">Work</option><option value="personal">Personal</option><option value="archive">Archive</option></select><div className="dialog-actions"><button type="button" className="button button-secondary" onClick={() => setModal(null)}>Cancel</button><button className="button button-primary">{editingWorkspace ? "Save changes" : "Create space"}</button></div></form> : <form onSubmit={(event) => void submitLink(event)}><label className="field-label" htmlFor="link-title">Title</label><input id="link-title" value={linkTitle} onChange={(event) => setLinkTitle(event.currentTarget.value)} maxLength={120} required autoFocus /><label className="field-label" htmlFor="link-url">URL</label><input id="link-url" type="url" inputMode="url" value={linkUrl} onChange={(event) => setLinkUrl(event.currentTarget.value)} placeholder="https://example.com" required /><small className="field-hint">Only http and https addresses are accepted.</small><label className="field-label" htmlFor="link-description">Description</label><textarea id="link-description" value={linkDescription} onChange={(event) => setLinkDescription(event.currentTarget.value)} maxLength={500} rows={3} /><div className="field-row"><label><span className="field-label">Category</span><input value={linkCategory} onChange={(event) => setLinkCategory(event.currentTarget.value)} maxLength={40} /></label><label><span className="field-label">Tags</span><input value={linkTags} onChange={(event) => setLinkTags(event.currentTarget.value)} placeholder="comma separated" /></label></div><div className="dialog-actions"><button type="button" className="button button-secondary" onClick={() => setModal(null)}>Cancel</button><button className="button button-primary">{editingLink ? "Save changes" : "Save link"}</button></div></form>}
+      </section></div>}
+
+      {onboardingOpen && <div className="modal-scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !walletBusy && onboardingStage !== "recovery") setOnboardingOpen(false); }}><section className="form-dialog onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+        <div className="dialog-heading"><div><span className="section-kicker">STELLAR TESTNET · PASSKEY WALLET</span><h2 id="onboarding-title">Your vault starts here.</h2></div><button className="icon-button" onClick={() => setOnboardingOpen(false)} aria-label="Close wallet onboarding" disabled={walletBusy || onboardingStage === "recovery"}><Icon name="close" size={18} /></button></div>
+        {onboardingStage === "intro" && <>
+          <p className="panel-copy">Create a real Stellar smart-account wallet secured by your device passkey — fingerprint, Face ID, or screen lock. No browser extension to install, and no seed phrase to copy or save.</p>
+          <label className="field-label" htmlFor="passkey-display-name">Display name (optional)</label>
+          <input id="passkey-display-name" value={displayName} onChange={(event) => setDisplayName(event.currentTarget.value)} placeholder="e.g. My vault wallet" maxLength={40} autoComplete="off" />
+          {walletError && <div role="alert" className="form-error"><Icon name="alert" size={16} />{walletError}</div>}
+          <div className="dialog-actions onboarding-actions"><button className="button button-primary" onClick={() => void handleCreatePasskey()} disabled={walletBusy}>{walletBusy ? "Working…" : "Create wallet with passkey"}</button></div>
+          <div className="onboarding-secondary"><button className="text-link" onClick={() => void handleConnectPasskey()} disabled={walletBusy}>Connect with passkey</button><button className="text-link" onClick={() => { setOnboardingOpen(false); void handleConnect(); }} disabled={walletBusy}>Connect an existing Stellar wallet</button></div>
+          <p className="fine-print">Testnet only, and this integration is unaudited and experimental — do not hold valuable assets in this wallet. Testnet XLM has no real monetary value. If you lose your device, a passkey alone cannot recover your vault passphrase; add a second passkey before you lose the first.</p>
+        </>}
+        {(onboardingStage === "creating" || onboardingStage === "connecting") && <div className="onboarding-progress" role="status"><span className="spinner" /><p>{onboardingStage === "creating" ? "Creating your passkey, then deploying your smart account on Stellar Testnet. Approve the passkey prompt on this device — deployment is confirmed on-chain before we call it done." : "Waiting for your passkey approval on this device…"}</p></div>}
+        {onboardingStage === "select" && <>
+          <p className="panel-copy">This passkey is linked to more than one smart account. Choose which wallet to connect — a credential alone is not proof of ownership, and the choice is verified on-chain before connecting.</p>
+          {passkeyCandidates.map((candidate) => <button key={candidate} className="button button-secondary full-button onboarding-candidate" onClick={() => void handleConnectPasskeyCandidate(candidate)} disabled={walletBusy}><Icon name="wallet" size={16} />{shortAddress(candidate)}</button>)}
+          {walletError && <div role="alert" className="form-error"><Icon name="alert" size={16} />{walletError}</div>}
+        </>}
+        {onboardingStage === "recovery" && wallet && <>
+          <h3>Back up your wallet — required</h3>
+          <p className="panel-copy">Your passkey lives on this device only. Add a recovery email so you have your wallet address and the steps to add a backup passkey — before you lose this device.</p>
+          <div className="inline-notice" role="note"><Icon name="alert" size={16} /><span>{RECOVERY_WARNING} This email holds no key or seed phrase, and VAULTORA never sends wallet recovery emails from a server — it opens your own mail app.</span></div>
+          <p className="panel-copy">Wallet address<br /><code>{wallet.address}</code></p>
+          <label className="field-label" htmlFor="passkey-recovery-email">Recovery email</label>
+          <input id="passkey-recovery-email" type="email" autoComplete="email" value={recoveryEmail} onChange={(event) => { setRecoveryEmail(event.currentTarget.value); setRecoveryError(""); }} placeholder="you@example.com" maxLength={254} />
+          {recoveryError && <div role="alert" className="form-error"><Icon name="alert" size={16} />{recoveryError}</div>}
+          <div className="dialog-actions onboarding-actions">
+            <button className="button button-secondary" onClick={() => handleRecoveryAction("mailto")} disabled={walletBusy}>Email my recovery details</button>
+            <button className="button button-secondary" onClick={() => handleRecoveryAction("copy")} disabled={walletBusy}>Copy recovery details</button>
+          </div>
+          {recoveryActionMessage && <p className="cloud-feedback" role="status">{recoveryActionMessage}</p>}
+          <div className="dialog-actions onboarding-actions">
+            <button className="button button-primary" onClick={() => handleRecoveryConfirm()} disabled={!recoveryAction || walletBusy}>I&apos;ve sent / saved my recovery email</button>
+          </div>
+          {recoveryRecord && <>
+            <p className="cloud-feedback" role="status">Recovery email recorded: {recoveryRecord.email}{recoveryRecord.backupPasskeyAdded ? " · Backup passkey added" : ""}</p>
+            <div className="dialog-actions onboarding-actions">
+              <button className="button button-secondary" onClick={() => void handleAddBackupPasskey()} disabled={backupBusy || recoveryRecord.backupPasskeyAdded}><Icon name="wallet" size={16} />{backupBusy ? "Adding backup passkey…" : recoveryRecord.backupPasskeyAdded ? "Backup passkey added" : "Add a backup passkey (recommended)"}</button>
+            </div>
+            {backupMessage && <p className="cloud-feedback" role="status">{backupMessage}</p>}
+          </>}
+          <div className="dialog-actions onboarding-actions">
+            <button className="button button-primary" onClick={() => handleRecoveryContinue()} disabled={!recoveryRecord}>Continue to VAULTORA</button>
+          </div>
+          <p className="fine-print">You cannot skip this step. The backup passkey is optional but recommended: approve the passkey prompt on a second device and it can connect this wallet on its own.</p>
+        </>}
+        {onboardingStage === "success" && wallet && <>
+          <div className="onboarding-success" role="status"><span className="onboarding-check"><Icon name="check" size={20} /></span><div><strong>Wallet ready on Stellar Testnet</strong><code>{wallet.address}</code><small>{wallet.provider}{wallet.balance ? ` · Balance: ${wallet.balance} XLM` : ""}</small>{recoveryRecord && <small>Recovery email: {recoveryRecord.email}{recoveryRecord.backupPasskeyAdded ? " · Backup passkey added" : " · No backup passkey yet"}</small>}</div></div>
+          {faucetMessage && <p className="cloud-feedback" role="status">{faucetMessage}</p>}
+          <div className="dialog-actions onboarding-actions"><button className="button button-secondary" onClick={() => void handleFaucet()} disabled={faucetBusy || wallet.kind !== "passkey"}><Icon name="plus" size={16} />{faucetBusy ? "Requesting…" : "Request Testnet XLM"}</button><button className="button button-primary" onClick={() => setOnboardingOpen(false)}>Continue to VAULTORA</button></div>
+          <p className="fine-print">Get free Testnet XLM to test your VAULTORA account and Stellar transactions. Testnet XLM has no real monetary value.</p>
+        </>}
       </section></div>}
     </div>
   );
@@ -1126,13 +1462,13 @@ function CloudSyncPanel({
   </section>;
 }
 
-function SettingsPage({ storageEstimate, wallet, onLock, onDisconnect, cloudControls }: { storageEstimate: Promise<{ usage: number; quota: number }>; wallet: ConnectedWallet | null; onLock: () => void; onDisconnect: () => void; cloudControls: ReactNode }) {
+function SettingsPage({ storageEstimate, wallet, recoveryRecord, onLock, onDisconnect, onRequestFaucet, faucetBusy, faucetMessage, cloudControls }: { storageEstimate: Promise<{ usage: number; quota: number }>; wallet: ConnectedWallet | null; recoveryRecord: RecoveryRecord | null; onLock: () => void; onDisconnect: () => void; onRequestFaucet: () => void; faucetBusy: boolean; faucetMessage: string; cloudControls: ReactNode }) {
   const [estimate, setEstimate] = useState<{ usage: number; quota: number } | null>(null);
   useEffect(() => { let alive = true; void storageEstimate.then((value) => { if (alive) setEstimate(value); }).catch(() => undefined); return () => { alive = false; }; }, [storageEstimate]);
   return <><PageIntro eyebrow="PREFERENCES" title="Settings" description="Your vault is encrypted in this browser. The passphrase is not stored." />
     <div className="settings-grid"><section className="panel settings-card"><span className="section-kicker">LOCAL VAULT</span><h2>Storage and encryption</h2><StatusRow icon="lock" title="Encryption" status="AES-256-GCM with passphrase-wrapped document keys" state="good" /><StatusRow icon="lock" title="Session lock" status="Manual or after 15 minutes without activity." state="good" /><StatusRow icon="network" title="Storage" status="Encrypted in this browser; cloud availability is shown below." state="neutral" /><div className="settings-data">Browser storage used<strong>{estimate ? formatBytes(estimate.usage) : "Checking…"}</strong></div>{estimate?.quota ? <small className="field-hint">Browser quota estimate: {formatBytes(estimate.quota)}. This varies by device and browser.</small> : null}<button className="button button-secondary" onClick={onLock}><Icon name="lock" size={16} />Lock vault</button></section>
     {cloudControls}
-    <section className="panel settings-card"><span className="section-kicker">STELLAR TESTNET</span><h2>Wallet connection</h2><StatusRow icon="wallet" title="Varial wallet" status={wallet ? shortAddress(wallet.address) : "Not connected"} state={wallet ? "good" : "neutral"} />{wallet && <button className="button button-secondary" onClick={onDisconnect}><Icon name="wallet" size={16} />Disconnect wallet</button>}<p className="panel-copy">Registration requires wallet approval. VAULTORA does not store wallet secret keys.</p></section></div>
+    <section className="panel settings-card"><span className="section-kicker">STELLAR TESTNET</span><h2>Wallet connection</h2><StatusRow icon="wallet" title={wallet ? wallet.provider : "Stellar wallet"} status={wallet ? shortAddress(wallet.address) : "Not connected"} state={wallet ? "good" : "neutral"} />{wallet?.kind === "passkey" && <StatusRow icon="network" title="Balance" status={wallet.balance ? `${wallet.balance} XLM` : "Balance unavailable"} state="neutral" />}{wallet?.kind === "passkey" && <StatusRow icon="lock" title="Recovery email" status={recoveryRecord ? `${recoveryRecord.email}${recoveryRecord.backupPasskeyAdded ? " · Backup passkey added" : " · No backup passkey yet"}` : "Not recorded — required after connecting"} state={recoveryRecord ? "good" : "warning"} />}{wallet && <button className="button button-secondary" onClick={onDisconnect}><Icon name="wallet" size={16} />Disconnect wallet</button>}{wallet?.kind === "passkey" && <><button className="button button-secondary" onClick={onRequestFaucet} disabled={faucetBusy}><Icon name="plus" size={16} />{faucetBusy ? "Requesting…" : "Request Testnet XLM"}</button>{faucetMessage && <p className="cloud-feedback" role="status">{faucetMessage}</p>}<p className="panel-copy">This is a Testnet smart account secured by your device passkey. Email alone cannot restore it — add a backup passkey before losing this device; a passkey is not a vault-passphrase recovery method. See docs/PASSKEY_WALLET.md.</p></>}<p className="panel-copy">Registration requires wallet approval. VAULTORA does not store wallet secret keys or passkey private material.</p></section></div>
   </>;
 }
 
