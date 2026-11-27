@@ -14,6 +14,30 @@ it by hand. It does not claim anything that has not been run.
   a real document-fingerprint registration with a passkey wallet. Those
   need a real browser/device and the Testnet relayer, and must be run by
   hand following the procedure below. Do not claim they work until they do.
+- **2026-11-27 — the shared SDF relayer proxy is unusable from browsers.**
+  The first manual test (Android Chrome, preview deployment) failed at
+  deployment with "Smart-account deployment failed: Failed to fetch".
+  Root cause, verified by direct probing: the shared proxy
+  `https://smart-account-relayer-proxy.sdf-ecosystem.workers.dev`
+  returns 403 `{"success":false,"error":"Origin is not allowed"}` for
+  **any** request carrying an `Origin` header — the preview domain, the
+  production domain, `localhost:5173`, and `lab.stellar.org` were all
+  rejected; the same request without `Origin` is processed. Browsers
+  always send `Origin` on cross-origin fetch, so the kit's
+  `relayer.send()` preflight fails from any browser. This is not a
+  network problem on the user's device, and merging to `main` would not
+  fix it (the production origin is rejected too).
+- **2026-11-27 — self-hosted relayer implemented.** VAULTORA now runs
+  its own relayer as a same-origin Vercel serverless function,
+  `POST /api/relayer` (`apps/web/api/relayer.ts`, allowlist in
+  `apps/web/api/relayer-validation.ts`). The app defaults to it
+  (`PASSKEY_RELAYER_URL` is now `"/api/relayer"`); `VITE_RELAYER_URL`
+  remains only as an override. The endpoint is live on the
+  `passkey-smart-wallet` preview, the sponsor account is funded (see
+  "Fee sponsorship"), and invalid payloads are rejected without
+  touching RPC (verified live, see "Verification"). A real passkey
+  ceremony through it has still not been run — that needs Daud's
+  device.
 
 ## Selected SDK
 
@@ -55,7 +79,9 @@ it by hand. It does not claim anything that has not been run.
 | Threshold policy | `CAZ2WFUDXGX265LOEARFEOYYUL6F4BYWXZLGUAWZNJY3MRFPNLSZVS4S` | v0.8.0 |
 | Weighted-threshold policy | `CDBYLFLUNPAYGE3AHZSMB4TFWECFCCHX6CJFMFO6HRPKK2W5PFU2LCKE` | v0.8.0 |
 | Spending-limit policy | `CC3CEYQAP6NPNFIYSWL5MVZRCPJZGWX4XO7WDEJOUVGO2FZX5OONYPA5` | v0.8.0 |
-| Relayer proxy | `https://smart-account-relayer-proxy.sdf-ecosystem.workers.dev` | SDF ecosystem, Testnet |
+| Relayer (self-hosted) | `POST /api/relayer` (same origin; Vercel serverless function) | VAULTORA, Testnet |
+| Relayer sponsor account | `GAOKZ6BA6QS3OSRUQIACV7VNHJHTKFMKAHCQMEEV2JMMY44AFACITZ7I` (10,000 Testnet XLM from Friendbot, 2026-11-27) | VAULTORA, Testnet |
+| Shared SDF relayer proxy | `https://smart-account-relayer-proxy.sdf-ecosystem.workers.dev` — **DO NOT USE**: returns 403 "Origin is not allowed" for every browser origin (verified 2026-11-27) | SDF ecosystem, Testnet |
 | RPC / passphrase | `https://soroban-testnet.stellar.org` / `Test SDF Network ; September 2015` | pinned, as before |
 | Registry contract | `CAQK2Q7I7Q5BAVP4LEOPRWSVRPPKAWIV4CVZPWH6AHIUYUDZTN67KWZQ` | existing, unchanged |
 
@@ -190,20 +216,81 @@ the same wallet on its own from the second device.
   the kit 0.10.0 README and SDK 17 docs, covered by mocked unit tests
   that assert it never calls `getAccount(C…)` or Varial signing.
 
-## Fee sponsorship
+## Fee sponsorship — self-hosted relayer (`POST /api/relayer`)
 
-- Wallet creation and passkey registry calls are fee-sponsored through
-  the shared Testnet relayer proxy above (the kit's `relayerUrl`). The
-  relayer's channel account sources and pays; the shared deployer never
-  pays and never signs an envelope.
+Wallet creation, passkey registry calls, and backup-passkey enrollment
+are fee-sponsored through VAULTORA's own relayer, a same-origin Vercel
+serverless function (`apps/web/api/relayer.ts`, Node runtime,
+`maxDuration` 60s in `apps/web/vercel.json`). The browser posts
+`{ func, auth }` base64 XDR strings — exactly what the kit's
+`RelayerClient.send()` posts — and the function builds the transaction
+envelope with the sponsor account as source, simulates it, signs it
+with the sponsor keypair, submits it to Soroban Testnet RPC, and
+returns `{ success: true, hash }`. The kit then polls RPC itself for
+confirmation (10 attempts), so the function returns as soon as the
+transaction is accepted (PENDING) and does not wait for confirmation.
+The sponsor account sources and pays; the shared deployer never pays
+and never signs an envelope.
+
+- **Sponsor account:** `GAOKZ6BA6QS3OSRUQIACV7VNHJHTKFMKAHCQMEEV2JMMY44AFACITZ7I`,
+  funded with 10,000 Testnet XLM from Friendbot on 2026-11-27. Its
+  secret lives **only** in the `VAULTORA_RELAYER_SPONSOR_SECRET` Vercel
+  env var (type `sensitive`, target `preview`, id `nkHKJmV7s1bAQexS`).
+  It is read from `process.env` in `api/relayer.ts` and nowhere else,
+  never logged, never returned, and never stored in the repo. The
+  sponsor holds only Testnet XLM, which has no monetary value.
+- **Rotation:** generate a fresh Testnet keypair, fund it via
+  Friendbot, verify the balance, then replace the env var value in the
+  Vercel dashboard (Project → Settings → Environment Variables) or via
+  the Vercel API (`DELETE` the old entry, `POST` the new one — values
+  of `sensitive` vars cannot be read back). Redeploy the preview so
+  the new value takes effect. The old sponsor account can simply be
+  abandoned; it holds only Testnet XLM.
+- **Allowlist (the security boundary).** The function classifies the
+  decoded host-function XDR before any RPC call
+  (`apps/web/api/relayer-validation.ts`) and sponsors **only**:
+  1. a `CreateContractV2` whose executable is the known smart-account
+     WASM hash (`c514d35e…1004b9e1`) — anyone may deploy their own
+     wallet; the sponsor only pays the deployment fee;
+  2. an `invokeContract` call to `register_document` on the registry
+     contract (`CAQK2Q7I…67KWZQ`);
+  3. an `invokeContract` call to `add_signer` or `batch_add_signer`
+     **on a contract whose on-chain code hash is the known
+     smart-account WASM hash** (verified with an RPC
+     `getLedgerEntries` read of the contract instance before
+     sponsoring). This is what the mandatory backup-passkey flow
+     (`kit.signers.addPasskey` + `kit.signAndSubmitAdmin`) submits, so
+     a strict deploy+register-only allowlist would have broken
+     recovery; the on-chain code check is what keeps this third case
+     from becoming arbitrary-call sponsorship. Auth entries are never
+     trusted for allowlisting — the chain re-validates them at
+     simulation time, and a failed simulation means nothing is
+     submitted and no fee is spent.
+  
+  Everything else is rejected with a safe (non-echoing) error: token
+  transfers, arbitrary contract calls, V1 contract creation,
+  Stellar-asset executables, unknown code, malformed XDR, and
+  oversized auth arrays. Unit tests cover each rejection
+  (`apps/web/src/lib/relayerValidation.test.ts`).
+- **Abuse mitigation and residual surface.** The function caps request
+  bodies at 64 KB and rate-limits best-effort at 20 requests per IP
+  per 10 minutes (per function instance, so approximate under
+  concurrency). The honest residual risk: anyone who can reach the
+  endpoint can ask the sponsor to pay the fee for a *valid* wallet
+  deployment, registry registration, or signer-admin call — including
+  deploying many wallets of their own. Each costs the sponsor only a
+  few thousandths of a Testnet XLM, and Testnet XLM is free from
+  Friendbot and worthless, so the worst case is the sponsor running
+  dry and deployments failing closed until it is re-funded or
+  rotated. That is acceptable for a Testnet-only preview and is the
+  reason the sponsor holds only Testnet funds. This design must be
+  re-reviewed before any mainnet use: on mainnet a sponsor like this
+  would need authentication, per-user quotas, and a funded budget.
 - **Faucet funding is not fee sponsorship.** The faucet gives the
   account XLM to hold; the relayer pays transaction fees. Both remain
-  available independently.
-- To self-host: run the OpenZeppelin Relayer proxy (or an equivalent
-  channel-account relayer), set `VITE_RELAYER_URL` to it, and keep any
-  relayer API key server-side — never in a `VITE_*` variable. A
-  self-hosted relayer changes who pays fees and must be reviewed for
-  trust before use on anything but Testnet.
+  available independently. The faucet (`kit.fundWallet`) does not use
+  this endpoint: it funds a temporary account via Friendbot and
+  submits through RPC directly.
 - Without a relayer, passkey registration fails closed with a clear
   error: a smart account cannot source a transaction itself (it has no
   sequence number), and the shared deployer cannot pay.
@@ -276,7 +363,22 @@ localStorage record, backup-passkey success/failure, Continue disabled
 before recovery, the modal not closing in the recovery stage, a
 returning user without recovery being sent to recovery on restore, and
 a returning user with completed recovery not being forced there. The
-existing Varial tests still pass. Total: 85 tests, 6 files.
+existing Varial tests still pass. The relayer allowlist is covered too:
+deployment of the known WASM hash is accepted, unknown WASM / V1
+creation / Stellar-asset executables / token transfers / arbitrary
+calls are rejected, `add_signer` is classified as wallet-admin (with
+the on-chain WASM check enforced by the handler), malformed XDR and
+bad auth are rejected, and the handler returns clean `{success:false}`
+shapes for 405/400/503/429 without touching RPC. Total: 106 tests,
+7 files.
+
+Live endpoint checks (preview): NOT YET RUN. `POST /api/relayer`
+still needs to be probed on the deployed preview with a deliberately
+invalid func and with a well-formed token-transfer func, expecting
+clean rejections (no 500, no secret in the response). Those checks are
+pending the push of this branch and a READY preview deployment. A real
+sponsored deployment through it has still not been run — that needs a
+passkey ceremony on Daud's device.
 
 Note: in this VM, `pnpm install` hits an `EPERM: fchown` error when
 writing the lockfile (overlay filesystem); the lockfile was generated

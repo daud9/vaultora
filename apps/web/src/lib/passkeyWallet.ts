@@ -52,13 +52,24 @@ export const PASSKEY_SPENDING_LIMIT_POLICY =
   import.meta.env.VITE_PASSKEY_SPENDING_LIMIT_POLICY?.trim() ||
   "CC3CEYQAP6NPNFIYSWL5MVZRCPJZGWX4XO7WDEJOUVGO2FZX5OONYPA5";
 /**
- * Shared SDF-ecosystem relayer proxy (Testnet only). It holds no VAULTORA
- * secret: it only fee-sponsors transactions through its own channel
- * accounts. A self-hosted relayer can replace it; see docs/PASSKEY_WALLET.md.
+ * Self-hosted VAULTORA relayer (Testnet only), same origin as the app:
+ * `POST /api/relayer` (see `apps/web/api/relayer.ts`). It holds no
+ * VAULTORA secret in the bundle: the sponsor keypair lives only in the
+ * `VAULTORA_RELAYER_SPONSOR_SECRET` Vercel env var (preview), and the
+ * function sponsors only smart-account deployments, registry
+ * `register_document` calls, and signer-admin calls on genuine
+ * VAULTORA smart accounts.
+ *
+ * The shared SDF-ecosystem proxy used to be the default. It is no longer
+ * usable: it returns 403 `{"success":false,"error":"Origin is not
+ * allowed"}` for every request carrying an `Origin` header (verified
+ * 2026-11-27 for the preview domain, the production domain, localhost
+ * and lab.stellar.org), and browsers always send `Origin`. Keep
+ * `VITE_RELAYER_URL` only as an escape hatch to point at another
+ * relayer URL; see docs/PASSKEY_WALLET.md.
  */
 export const PASSKEY_RELAYER_URL =
-  import.meta.env.VITE_RELAYER_URL?.trim() ||
-  "https://smart-account-relayer-proxy.sdf-ecosystem.workers.dev";
+  import.meta.env.VITE_RELAYER_URL?.trim() || "/api/relayer";
 export const PASSKEY_INDEXER_URL = import.meta.env.VITE_PASSKEY_INDEXER_URL?.trim() || undefined;
 export const PASSKEY_SESSION_EXPIRY_MS = Number(
   import.meta.env.VITE_PASSKEY_SESSION_EXPIRY_MS?.trim() || 7 * 24 * 60 * 60 * 1000,
