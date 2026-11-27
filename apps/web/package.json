@@ -13,6 +13,7 @@
   "dependencies": {
     "@stellar/stellar-sdk": "17.4.0",
     "@stellar/varial-sdk": "7.0.0",
+    "smart-account-kit": "0.10.0",
     "@supabase/supabase-js": "^2.119.2",
     "react": "19.3.1",
     "react-dom": "19.3.1"

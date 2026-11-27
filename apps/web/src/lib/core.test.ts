@@ -1,9 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { Account, Address, Keypair, StrKey, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
+import { Account, Address, Keypair, Operation, StrKey, TransactionBuilder, rpc, scValToNative, xdr } from "@stellar/stellar-sdk";
 import { InvalidFileError, sha256File, validateFile } from "./fileHash";
 import { connectWallet, walletErrorMessage } from "./wallet";
 import { initialTransactionState, transactionReducer } from "./transactionState";
 import { buildDocumentContractArgs, fingerprintToScVal, invokeDocumentContract } from "./soroban";
+import { signTransaction } from "@stellar/varial-sdk";
+
+vi.mock("@stellar/varial-sdk", () => ({
+  signTransaction: vi.fn(),
+  disconnect: vi.fn(),
+  getNetworkDetails: vi.fn(),
+  requestAccess: vi.fn(),
+}));
+
+vi.mock("smart-account-kit", () => ({
+  SmartAccountKit: class {},
+  IndexedDBStorage: class {},
+}));
 
 const abcSha256 = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 
@@ -149,6 +162,169 @@ describe("Varial wallet adapter errors", () => {
       getNetworkDetails: vi.fn(),
     };
     await expect(connectWallet(api)).rejects.toThrow("User rejected access");
+  });
+});
+
+describe("passkey smart-account registry branching", () => {
+  const registryContract = StrKey.encodeContract(new Uint8Array(32).fill(3));
+  const passkeyAddress = StrKey.encodeContract(new Uint8Array(32).fill(11));
+  const testnetConfig = {
+    rpcUrl: "https://soroban-testnet.stellar.org",
+    networkPassphrase: "Test SDF Network ; September 2015",
+    contractId: registryContract,
+    registerMethod: "register_document",
+    verifyMethod: "verify_document",
+  };
+
+  /** ASCII bytes built with charCodeAt so the Uint8Array is realm-consistent with the SDK in jsdom. */
+  function asciiBytes(value: string): Uint8Array {
+    const bytes = new Uint8Array(value.length);
+    for (let i = 0; i < value.length; i += 1) bytes[i] = value.charCodeAt(i);
+    return bytes;
+  }
+
+  function authEntryFor(owner: string) {
+    return new xdr.SorobanAuthorizationEntry({
+      credentials: xdr.SorobanCredentials.sorobanCredentialsAddress(
+        new xdr.SorobanAddressCredentials({
+          address: new Address(owner).toScAddress(),
+          nonce: 0n,
+          signatureExpirationLedger: 0,
+          signature: xdr.ScVal.scvVoid(),
+        }),
+      ),
+      rootInvocation: new xdr.SorobanAuthorizedInvocation({
+        function: xdr.SorobanAuthorizedFunction.sorobanAuthorizedFunctionTypeContractFn(
+          new xdr.InvokeContractArgs({
+            contractAddress: new Address(registryContract).toScAddress(),
+            functionName: asciiBytes("register_document"),
+            args: [],
+          }),
+        ),
+        subInvocations: [],
+      }),
+    });
+  }
+
+  it("verifies a passkey account by simulation only, without getAccount(C...) or Varial signing", async () => {
+    const server = {
+      getAccount: vi.fn(),
+      simulateTransaction: vi.fn(async () => ({ result: { retval: xdr.ScVal.scvBool(true) } })),
+      prepareTransaction: vi.fn(),
+      sendTransaction: vi.fn(),
+    };
+    const result = await invokeDocumentContract({
+      operation: "verify",
+      digest: "01".repeat(32),
+      sourceAddress: passkeyAddress,
+      config: testnetConfig,
+      walletKind: "passkey",
+      passkey: {
+        signAuthEntry: vi.fn(),
+        relayerSend: vi.fn(),
+      },
+      server: server as unknown as rpc.Server,
+    });
+    expect(result).toEqual({ kind: "verification", found: true });
+    expect(server.getAccount).not.toHaveBeenCalled();
+    expect(server.prepareTransaction).not.toHaveBeenCalled();
+    expect(server.sendTransaction).not.toHaveBeenCalled();
+    expect(signTransaction).not.toHaveBeenCalled();
+  });
+
+  it("registers with a passkey by signing auth entries and submitting through the relayer", async () => {
+    const entry = authEntryFor(passkeyAddress);
+    const entryBase64 = entry.toXdr("base64");
+    const server = {
+      getAccount: vi.fn(),
+      simulateTransaction: vi
+        .fn()
+        .mockResolvedValueOnce({ result: { auth: [entry], retval: xdr.ScVal.scvVoid() } })
+        .mockResolvedValueOnce({ result: { retval: xdr.ScVal.scvVoid() } }),
+      prepareTransaction: vi.fn(),
+      sendTransaction: vi.fn(),
+      getTransaction: vi.fn(async () => ({ status: rpc.Api.GetTransactionStatus.SUCCESS })),
+    };
+    const passkey = {
+      signAuthEntry: vi.fn(async (input: string) => input),
+      relayerSend: vi.fn(async () => ({ success: true, hash: "relayer-hash" })),
+    };
+    const result = await invokeDocumentContract({
+      operation: "register",
+      digest: "01".repeat(32),
+      metadataDigest: "02".repeat(32),
+      sourceAddress: passkeyAddress,
+      config: testnetConfig,
+      walletKind: "passkey",
+      passkey,
+      wait: async () => undefined,
+      server: server as unknown as rpc.Server,
+    });
+    expect(result).toEqual({ kind: "registered", hash: "relayer-hash", confirmation: "confirmed" });
+    expect(server.getAccount).not.toHaveBeenCalled();
+    expect(signTransaction).not.toHaveBeenCalled();
+    expect(passkey.signAuthEntry).toHaveBeenCalledWith(entryBase64, { contextRuleIds: [0] });
+    expect(passkey.relayerSend).toHaveBeenCalledTimes(1);
+    const [funcBase64, authBase64] = passkey.relayerSend.mock.calls[0] as unknown as [string, string[]];
+    expect(typeof funcBase64).toBe("string");
+    expect(authBase64).toHaveLength(1);
+    expect(authBase64[0]).toBe(entryBase64);
+    expect(server.simulateTransaction).toHaveBeenCalledTimes(2);
+  });
+
+  it("refuses a passkey registration without passkey dependencies", async () => {
+    const server = { getAccount: vi.fn(), simulateTransaction: vi.fn() };
+    await expect(invokeDocumentContract({
+      operation: "register",
+      digest: "01".repeat(32),
+      metadataDigest: "02".repeat(32),
+      sourceAddress: passkeyAddress,
+      config: testnetConfig,
+      walletKind: "passkey",
+      server: server as unknown as rpc.Server,
+    })).rejects.toThrow(/not connected/i);
+    expect(server.simulateTransaction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the Varial registration path signing through Varial", async () => {
+    const owner = Keypair.random().publicKey();
+    const sourceAccount = new Account(owner, "1");
+    const hostFunction = xdr.HostFunction.hostFunctionTypeInvokeContract(
+      new xdr.InvokeContractArgs({
+        contractAddress: new Address(registryContract).toScAddress(),
+        functionName: asciiBytes("register_document"),
+        args: [
+          xdr.ScVal.scvBytes(new Uint8Array(32).fill(1)),
+          xdr.ScVal.scvBytes(new Uint8Array(32).fill(2)),
+          new Address(owner).toScVal(),
+        ],
+      }),
+    );
+    const transaction = new TransactionBuilder(sourceAccount, { fee: "100" })
+      .setNetworkPassphrase(testnetConfig.networkPassphrase)
+      .setTimeout(30)
+      .addOperation(Operation.invokeHostFunction({ func: hostFunction, auth: [] }))
+      .build();
+    const server = {
+      getAccount: vi.fn(async () => sourceAccount),
+      simulateTransaction: vi.fn(),
+      prepareTransaction: vi.fn(async () => transaction),
+      sendTransaction: vi.fn(async () => ({ hash: "varial-hash", status: "PENDING" })),
+      getTransaction: vi.fn(async () => ({ status: rpc.Api.GetTransactionStatus.SUCCESS })),
+    };
+    vi.mocked(signTransaction).mockResolvedValue({ signedTxXdr: transaction.toXDR(), signerAddress: owner });
+    const result = await invokeDocumentContract({
+      operation: "register",
+      digest: "01".repeat(32),
+      metadataDigest: "02".repeat(32),
+      sourceAddress: owner,
+      config: testnetConfig,
+      wait: async () => undefined,
+      server: server as unknown as rpc.Server,
+    });
+    expect(result).toEqual({ kind: "registered", hash: "varial-hash", confirmation: "confirmed" });
+    expect(signTransaction).toHaveBeenCalledTimes(1);
+    expect(server.getAccount).toHaveBeenCalledWith(owner);
   });
 });
 

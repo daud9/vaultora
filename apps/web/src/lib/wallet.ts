@@ -11,9 +11,19 @@ export interface WalletNetwork {
   sorobanRpcUrl?: string;
 }
 
+export type WalletKind = "passkey" | "varial";
+
 export interface ConnectedWallet {
   address: string;
   network: WalletNetwork | null;
+  /** "passkey" for a Smart Account Kit smart account, "varial" for Varial. */
+  kind: WalletKind;
+  /** Display name of the wallet provider, e.g. "Passkey smart account" / "Varial". */
+  provider: string;
+  /** Base64URL passkey credential id, when kind is "passkey". Never a secret. */
+  credentialId?: string;
+  /** Native XLM balance as a formatted string, when retrieved. Null = unknown. */
+  balance?: string | null;
 }
 
 interface AccessResult {
@@ -60,7 +70,7 @@ export async function connectWallet(
     // Address access succeeded; keep the connection visible, but do not claim a network.
   }
 
-  return { address: result.address, network };
+  return { address: result.address, network, kind: "varial", provider: "Varial", balance: null };
 }
 
 export async function disconnectWallet(): Promise<void> {
