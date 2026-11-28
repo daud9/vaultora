@@ -96,6 +96,16 @@ describe("passkey wallet creation", () => {
     await expect(createPasskeyWallet(undefined, kit)).rejects.toThrow(/secure/i);
     expect(kit.createWallet).not.toHaveBeenCalled();
   });
+
+  it("refuses to start when the device has no user-verifying authenticator, and says why", async () => {
+    Object.defineProperty(window.PublicKeyCredential, "isUserVerifyingPlatformAuthenticatorAvailable", {
+      value: vi.fn().mockResolvedValue(false),
+      configurable: true,
+    });
+    const kit = mockKit();
+    await expect(createPasskeyWallet(undefined, kit)).rejects.toThrow(/screen lock/i);
+    expect(kit.createWallet).not.toHaveBeenCalled();
+  });
 });
 
 describe("passkey wallet connection", () => {
@@ -258,5 +268,13 @@ describe("passkey error mapping", () => {
     expect(passkeyErrorMessage(new PasskeyAmbiguousError([contractAddress]))).toMatch(
       /more than one smart account|linked to a smart account/i,
     );
+  });
+
+  it("explains a credential-manager UnknownError as a likely missing screen lock", () => {
+    const error = new DOMException(
+      "An unknown error occurred while talking to the credential manager.",
+      "UnknownError",
+    );
+    expect(passkeyErrorMessage(error)).toMatch(/screen lock/i);
   });
 });

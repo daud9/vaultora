@@ -220,6 +220,28 @@ function assertPasskeySupported(): void {
   if (message) throw new Error(message);
 }
 
+/**
+ * Whether this device has a platform authenticator that can verify the
+ * user (screen lock, fingerprint, or Face ID) — the thing a passkey
+ * creation actually needs. Returns null when the browser does not expose
+ * the check, so an unknown browser is never blocked on a guess.
+ */
+export async function hasPlatformAuthenticator(): Promise<boolean | null> {
+  try {
+    if (typeof window === "undefined") return null;
+    const credential = window.PublicKeyCredential;
+    if (
+      !credential ||
+      typeof credential.isUserVerifyingPlatformAuthenticatorAvailable !== "function"
+    ) {
+      return null;
+    }
+    return await credential.isUserVerifyingPlatformAuthenticatorAvailable();
+  } catch {
+    return null;
+  }
+}
+
 function toConnectedWallet(address: string, credentialId?: string): ConnectedWallet {
   return {
     address,
@@ -246,6 +268,14 @@ export async function createPasskeyWallet(
   kit: PasskeyKitLike = getPasskeyKit(),
 ): Promise<{ wallet: ConnectedWallet; transactionHash?: string }> {
   assertPasskeySupported();
+  // Fail fast with a diagnosis instead of letting the OS credential
+  // manager fail with an opaque "unknown error": passkey creation needs
+  // a screen lock (PIN, pattern, or fingerprint) on this device.
+  if ((await hasPlatformAuthenticator()) === false) {
+    throw new Error(
+      "This device cannot create passkeys yet: no screen lock or fingerprint is set up. Set up a PIN, pattern, or fingerprint in this device's settings, then try again.",
+    );
+  }
   const userName = displayName?.trim() || "VAULTORA user";
   const result = await kit.createWallet(PASSKEY_APP_NAME, userName, {
     autoSubmit: true,
@@ -467,6 +497,12 @@ export function passkeyErrorMessage(error: unknown): string {
       /passkey.*not supported|webauthn.*not|secure context|not available/i.test(message)
     ) {
       return "Passkeys are not available in this browser or on this connection. Use a current browser over HTTPS, or connect an existing Stellar wallet instead.";
+    }
+    if (
+      name === "UnknownError" ||
+      /unknown error.*credential manager|talking to the credential manager/i.test(message)
+    ) {
+      return "The device's passkey system could not complete the request. This usually means no screen lock (PIN, pattern, or fingerprint) is set up on this device, or the device passkey service had a problem. Set up a screen lock in the device settings and try again, or try on desktop Chrome.";
     }
     if (/deployment failed|relayer|rpc|network|timeout|timed out/i.test(message)) {
       return `${message} Check your connection and try again. Nothing was created if deployment did not confirm.`;
