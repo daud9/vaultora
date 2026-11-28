@@ -20,8 +20,8 @@ import {
   classifyRelayerPayload,
   parseRelayerAuth,
 } from "../../api/relayer-validation";
-import { createRelayerHandler } from "../../api/relayer";
-import type { RelayerRequest, RelayerResponse } from "../../api/relayer";
+import { createRelayerHandler } from "../../api/relayer-handler";
+import type { RelayerRequest, RelayerResponse } from "../../api/relayer-handler";
 
 const ZERO_ADDRESS = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF";
 const OTHER_CONTRACT = StrKey.encodeContract(new Uint8Array(32).fill(9));
@@ -241,15 +241,22 @@ describe("classifyRelayerPayload", () => {
 function mockResponse(): { res: RelayerResponse; captured: { status?: number; body?: unknown } } {
   const captured: { status?: number; body?: unknown } = {};
   const res = {
+    // Raw Node path (what the handler uses first).
+    writeHead(code: number) {
+      captured.status = code;
+    },
+    setHeader() {},
+    end(payload?: string) {
+      if (payload) captured.body = JSON.parse(payload);
+    },
+    // Express-style fallback path.
     status(code: number) {
       captured.status = code;
       return this;
     },
-    setHeader() {},
     json(body: unknown) {
       captured.body = body;
     },
-    end() {},
   } as unknown as RelayerResponse;
   return { res, captured };
 }

@@ -29,7 +29,8 @@ it by hand. It does not claim anything that has not been run.
   fix it (the production origin is rejected too).
 - **2026-11-27 — self-hosted relayer implemented.** VAULTORA now runs
   its own relayer as a same-origin Vercel serverless function,
-  `POST /api/relayer` (`apps/web/api/relayer.ts`, allowlist in
+  `POST /api/relayer` (`apps/web/api/relayer.ts` thin entry point +
+  `apps/web/api/relayer-handler.ts` implementation, allowlist in
   `apps/web/api/relayer-validation.ts`). The app defaults to it
   (`PASSKEY_RELAYER_URL` is now `"/api/relayer"`); `VITE_RELAYER_URL`
   remains only as an override. The endpoint is live on the
@@ -220,7 +221,8 @@ the same wallet on its own from the second device.
 
 Wallet creation, passkey registry calls, and backup-passkey enrollment
 are fee-sponsored through VAULTORA's own relayer, a same-origin Vercel
-serverless function (`apps/web/api/relayer.ts`, Node runtime,
+serverless function (`apps/web/api/relayer.ts` entry point +
+`apps/web/api/relayer-handler.ts`, Node runtime,
 `maxDuration` 60s in `apps/web/vercel.json`). The browser posts
 `{ func, auth }` base64 XDR strings — exactly what the kit's
 `RelayerClient.send()` posts — and the function builds the transaction
@@ -236,7 +238,7 @@ and never signs an envelope.
   funded with 10,000 Testnet XLM from Friendbot on 2026-11-27. Its
   secret lives **only** in the `VAULTORA_RELAYER_SPONSOR_SECRET` Vercel
   env var (type `sensitive`, target `preview`, id `nkHKJmV7s1bAQexS`).
-  It is read from `process.env` in `api/relayer.ts` and nowhere else,
+  It is read from `process.env` in `api/relayer-handler.ts` and nowhere else,
   never logged, never returned, and never stored in the repo. The
   sponsor holds only Testnet XLM, which has no monetary value.
 - **Rotation:** generate a fresh Testnet keypair, fund it via
@@ -372,13 +374,26 @@ bad auth are rejected, and the handler returns clean `{success:false}`
 shapes for 405/400/503/429 without touching RPC. Total: 106 tests,
 7 files.
 
-Live endpoint checks (preview): NOT YET RUN. `POST /api/relayer`
-still needs to be probed on the deployed preview with a deliberately
-invalid func and with a well-formed token-transfer func, expecting
-clean rejections (no 500, no secret in the response). Those checks are
-pending the push of this branch and a READY preview deployment. A real
-sponsored deployment through it has still not been run — that needs a
-passkey ceremony on Daud's device.
+Live endpoint checks (preview): PARTIAL, 2026-11-28. The first real
+browser attempt reached the relayer and came back **HTTP 500 with no
+JSON body** ("Relayer request failed with status 500"). The handler's
+own code paths never return 500 (they return 400/429/502/503 with
+`{success:false}`), and Vercel's runtime-logs API returned only build
+events, so the failure happened outside the handler — at module load
+or in the response helpers. The handler code itself is proven: the
+exact kit payload (synthetic P-256 passkey, shared deployer) run
+through the local handler deployed a real smart account on Testnet
+twice (tx `60ce5ec6…e3314a`, ledger 5961664; tx `f2ec536d…02dfc6`).
+Fix shipped: `api/relayer.ts` is now a thin entry point with no
+runtime imports that dynamically imports `api/relayer-handler.ts`
+inside a try/catch, and all responses use raw Node methods
+(`writeHead`/`end`) with the Express-style helpers only as fallback —
+so a load failure now surfaces as a JSON error naming the cause
+instead of a bare platform 500. The deliberate rejection probes
+(invalid func, token-transfer func) still await a signed-in session:
+anonymous probes get 401 from Vercel deployment protection. A real
+sponsored deployment from Daud's device still has not succeeded — the
+next phone attempt is the test.
 
 Note: in this VM, `pnpm install` hits an `EPERM: fchown` error when
 writing the lockfile (overlay filesystem); the lockfile was generated
