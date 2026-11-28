@@ -480,11 +480,15 @@ export function passkeyErrorMessage(error: unknown): string {
   // DOMException (WebAuthn) is not an Error instance, so read name/message
   // from any object that carries them instead of relying on instanceof.
   if (error && typeof error === "object") {
-    const maybe = error as { name?: unknown; message?: unknown };
+    const maybe = error as { name?: unknown; message?: unknown; code?: unknown };
     const message = cleanInterfaceMessage(
       typeof maybe.message === "string" ? maybe.message.trim() : "",
     );
     const name = typeof maybe.name === "string" ? maybe.name : "";
+    // SimpleWebAuthn surfaces the browser's error code (e.g.
+    // ERROR_CEREMONY_ABORTED) on `code`; keep it — it is the only precise
+    // identifier when the message itself is a generic "unknown error".
+    const code = typeof maybe.code === "string" ? maybe.code.trim() : "";
     if (
       name === "NotAllowedError" ||
       /not allowed|user cancelled|cancelled|aborted|operation either timed out/i.test(message)
@@ -502,7 +506,7 @@ export function passkeyErrorMessage(error: unknown): string {
       name === "UnknownError" ||
       /unknown error.*credential manager|talking to the credential manager/i.test(message)
     ) {
-      return "The device's passkey system could not complete the request. This usually means no screen lock (PIN, pattern, or fingerprint) is set up on this device, or the device passkey service had a problem. Set up a screen lock in the device settings and try again, or try on desktop Chrome.";
+      return `The device's passkey system could not complete the request${code ? ` (${code})` : ""}. This usually means no screen lock (PIN, pattern, or fingerprint) is set up on this device, or the device passkey service had a problem. Set up a screen lock in the device settings and try again, or try on desktop Chrome.`;
     }
     if (/deployment failed|relayer|rpc|network|timeout|timed out/i.test(message)) {
       return `${message} Check your connection and try again. Nothing was created if deployment did not confirm.`;

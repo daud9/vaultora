@@ -277,4 +277,11 @@ describe("passkey error mapping", () => {
     );
     expect(passkeyErrorMessage(error)).toMatch(/screen lock/i);
   });
+
+  it("keeps the browser's error code on an UnknownError so the failure names itself", () => {
+    const error = new Error("An unknown error occurred while talking to the credential manager.");
+    (error as Error & { name: string; code: string }).name = "UnknownError";
+    (error as Error & { name: string; code: string }).code = "ERROR_CEREMONY_ABORTED";
+    expect(passkeyErrorMessage(error)).toMatch(/ERROR_CEREMONY_ABORTED/);
+  });
 });
